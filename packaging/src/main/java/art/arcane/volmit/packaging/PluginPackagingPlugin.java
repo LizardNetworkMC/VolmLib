@@ -18,6 +18,7 @@ import org.gradle.api.tasks.compile.JavaCompile;
 
 import java.io.File;
 import java.io.IOException;
+import java.util.HashSet;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
@@ -122,13 +123,13 @@ public class PluginPackagingPlugin implements Plugin<Project> {
 
     private void configureArtifact(Project project, PackagingArtifact policy, PackagingMode mode,
                                    TaskProvider<Task> verify) {
-        if (policy.getMaximumBytes() <= 0) {
+        if (!policy.isModded() && (policy.getMaximumBytes() == null || policy.getMaximumBytes() <= 0)) {
             throw new GradleException("A positive jar budget is required for " + policy.getName());
         }
         if (!policy.isModded() && policy.getMaximumBytes() > PackagingArtifact.SPIGOT_CAP_BYTES) {
             throw new GradleException("Jar budget for " + policy.getName() + " is " + policy.getMaximumBytes()
                     + " bytes, above the " + PackagingArtifact.SPIGOT_CAP_BYTES
-                    + " byte Spigot cap; only modded profiles may exceed it");
+                    + " byte Spigot cap");
         }
         String skipReason = shrinkSkipReason(project, policy, mode);
         TaskProvider<AbstractArchiveTask> producer = project.getTasks().named(policy.getTaskName(), AbstractArchiveTask.class);
@@ -143,10 +144,11 @@ public class PluginPackagingPlugin implements Plugin<Project> {
         }
         librarySources.add(policy.getShrinkLibraries());
         FileCollection libraries = project.files(librarySources);
+        FileCollection authoritativeLibraries = policy.getAuthoritativeShrinkLibraries();
         producer.configure(task -> {
             task.getOutputs().file(report);
             task.getInputs().property("packaging.mode", mode.label());
-            task.getInputs().property("packaging.maximumBytes", policy.getMaximumBytes());
+            task.getInputs().property("packaging.maximumBytes", policy.getMaximumBytes()).optional(true);
             task.getInputs().property("packaging.modded", policy.isModded());
             task.getInputs().property("packaging.intermediate", policy.isIntermediate());
             task.getInputs().property("packaging.stripDirectories", policy.isStripDirectories());
@@ -163,9 +165,13 @@ public class PluginPackagingPlugin implements Plugin<Project> {
             if (skipReason == null) {
                 task.getInputs().files(policy.getShrinkRules()).withPathSensitivity(PathSensitivity.NONE);
                 task.getInputs().files(libraries).withPathSensitivity(PathSensitivity.NONE);
-                task.dependsOn(libraries);
+                task.getInputs().files(authoritativeLibraries.filter(file -> !task.getOutputs().getFiles().contains(file)))
+                        .withPathSensitivity(PathSensitivity.NONE);
+                task.getInputs().property("packaging.authoritativeShrinkLibraries", project.provider(() ->
+                        authoritativeLibraries.getFiles().stream().map(File::getAbsolutePath).toList()));
+                task.dependsOn(libraries, authoritativeLibraries);
             }
-            task.doLast(ignored -> optimize(task, policy, mode, report, skipReason, libraries, libraryCache, libraryWork));
+            task.doLast(ignored -> optimize(task, policy, mode, report, skipReason, libraries, authoritativeLibraries, libraryCache, libraryWork));
         });
         TaskProvider<Task> check = project.getTasks().register("verify" + capitalize(policy.getName()) + "Packaging", task -> {
             task.setGroup("verification");
@@ -185,7 +191,9 @@ public class PluginPackagingPlugin implements Plugin<Project> {
                 task.setDescription("Selects the smaller ordinary or embedded XZ distribution for " + policy.getName() + ".");
                 task.dependsOn(check);
                 task.getInputJar().set(producer.flatMap(AbstractArchiveTask::getArchiveFile));
-                task.getMaximumBytes().set(mode.development() ? Long.MAX_VALUE : policy.getEffectiveMaximumBytes());
+                task.getMaximumBytes().unsetConvention();
+                Long budget = policy.getEffectiveMaximumBytes();
+                task.getMaximumBytes().set(budget != null && mode.development() ? Long.valueOf(Long.MAX_VALUE) : budget);
                 task.getEntrypoints().set(policy.getPackedEntrypoints());
                 task.getJarAccessors().set(policy.getPackedJarAccessors());
                 task.getOutputJar().set(project.getLayout().file(producer.flatMap(AbstractArchiveTask::getArchiveFile)
@@ -219,12 +227,12 @@ public class PluginPackagingPlugin implements Plugin<Project> {
     }
 
     private void optimize(AbstractArchiveTask task, PackagingArtifact policy, PackagingMode mode, File report,
-                          String skipReason, FileCollection libraries, File libraryCache, File libraryWork) {
+                          String skipReason, FileCollection libraries, FileCollection authoritativeLibraries, File libraryCache, File libraryWork) {
         File artifact = task.getArchiveFile().get().getAsFile();
         long before = artifact.length();
         try {
             JarShrinker.ShrinkResult shrink = skipReason == null
-                    ? shrink(artifact, policy, report.getParentFile(), libraries, libraryCache, libraryWork)
+                    ? shrink(artifact, policy, report.getParentFile(), libraries, authoritativeLibraries, libraryCache, libraryWork)
                     : JarShrinker.ShrinkResult.skipped(skipReason, before);
             List<String> roots = new ArrayList<>(policy.getKeepPrefixes());
             for (String required : policy.getRequiredEntries()) {
@@ -246,12 +254,21 @@ public class PluginPackagingPlugin implements Plugin<Project> {
     }
 
     private JarShrinker.ShrinkResult shrink(File artifact, PackagingArtifact policy, File reports,
-                                            FileCollection libraries, File libraryCache, File libraryWork)
+                                            FileCollection libraries, FileCollection authoritativeLibraries, File libraryCache, File libraryWork)
             throws IOException {
         List<File> resolved = new ArrayList<>();
         Set<String> bundled = JarShrinker.classEntries(artifact);
+        Set<String> authoritativeClasses = new HashSet<>();
+        for (File library : authoritativeLibraries.getFiles()) {
+            if (!library.exists()) { throw new IOException("Authoritative shrink library is missing: " + library); }
+            if (JarShrinker.overlaps(library, bundled)) { throw new IOException("Authoritative shrink library conflicts with program classes: " + library); }
+            for (String name : JarShrinker.classEntries(library)) {
+                if (!authoritativeClasses.add(name)) { throw new IOException("Authoritative shrink libraries have competing class owners: " + name); }
+            }
+            resolved.add(library);
+        }
         for (File library : libraries.getFiles()) {
-            if (library.exists() && !JarShrinker.overlaps(library, bundled)) {
+            if (library.exists() && !resolved.contains(library) && !JarShrinker.overlaps(library, bundled)) {
                 resolved.add(library);
             }
         }
@@ -268,7 +285,10 @@ public class PluginPackagingPlugin implements Plugin<Project> {
     private void validate(File artifact, PackagingArtifact policy, PackagingMode mode, Logger logger) {
         try {
             List<String> warnings = JarArtifactAudit.verify(artifact, policy, mode);
-            if (mode.development()) {
+            if (mode.development() && policy.isModded()) {
+                logger.lifecycle("{}: DEVELOPMENT packaging via {}. Modded distributions have no size budget. Not a release jar.",
+                        artifact.getName(), mode.source());
+            } else if (mode.development()) {
                 logger.lifecycle("{}: DEVELOPMENT packaging via {}. The ProGuard shrink is skipped and the {} byte size budget is advisory. Not a release jar.",
                         artifact.getName(), mode.source(), policy.getEffectiveMaximumBytes());
             }

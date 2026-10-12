@@ -15,7 +15,7 @@ public class NativeAdaptersTest {
         assertEquals(NativeVersion.V26_2_R1, NativeVersion.resolve("26.1.2.build.74-stable").orElseThrow());
         assertEquals(NativeVersion.V26_2_R1, NativeVersion.resolve("26.2-R0.1-SNAPSHOT").orElseThrow());
         assertEquals(NativeVersion.V26_3_R1, NativeVersion.resolve("26.3.build.25-alpha").orElseThrow());
-        for (String version : new String[]{"1.21.10", "26.1", "26.2.1", "27.2", "26.2garbage", "26.2.build.invalid", ""}) {
+        for (String version : new String[]{"1.21.10", "26.1", "26.1.1", "26.1.3", "26.2.1", "27.2", "26.2garbage", "26.2.build.invalid", ""}) {
             assertTrue(version, NativeVersion.resolve(version).isEmpty());
         }
         assertTrue(NativeVersion.resolve(null).isEmpty());
@@ -29,6 +29,12 @@ public class NativeAdaptersTest {
         assertTrue(NativeVersion.resolve("26.1.0").isEmpty());
         assertTrue(NativeVersion.resolve("1.21.0").isEmpty());
         assertTrue(NativeVersion.resolve("26.3.1").isEmpty());
+    }
+
+    @Test
+    public void resolvesLeafBuild123ToTheMatchingNativePackage() {
+        assertEquals(NativeVersion.V26_2_R1, NativeVersion.resolve("26.2.build.123-alpha").orElseThrow());
+        assertEquals("available", NativeAdapters.require(Probe.class, "26.2.build.123-alpha").value());
     }
 
     @Test

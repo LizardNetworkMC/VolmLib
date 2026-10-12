@@ -31,6 +31,7 @@ import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.locks.LockSupport;
+import java.util.function.Supplier;
 
 public final class NativeTerrainSnapshotsImpl implements NativeTerrainSnapshots {
     private static final long WRITE_TIMEOUT_NANOS = TimeUnit.SECONDS.toNanos(30L);
@@ -44,31 +45,25 @@ public final class NativeTerrainSnapshotsImpl implements NativeTerrainSnapshots 
         SnapshotPolicy.CaptureTarget target = new SnapshotPolicy.CaptureTarget(world.getWorldFolder().toPath(),
                 chunkX, chunkZ, request.minimumY(), request.height());
         ServerLevel level = ((CraftWorld) world).getHandle();
-        CompletableFuture<CapturedChunk> snapshot = new CompletableFuture<>();
-        policy.runRegion(new SnapshotPolicy.Region(world, chunkX, chunkZ), () -> {
+        long deadline = System.nanoTime() + WRITE_TIMEOUT_NANOS;
+        CompletableFuture<CapturedChunk> snapshot = runSnapshotTask(level, new ChunkPos(chunkX, chunkZ), deadline, () -> {
             try {
                 NewChunkHolder holder = level.moonrise$getChunkTaskScheduler().chunkHolderManager.getChunkHolder(chunkX, chunkZ);
                 ChunkAccess chunk = holder == null ? null : holder.getCurrentChunk();
                 if (chunk == null) {
-                    snapshot.complete(new CapturedChunk(new ChunkPos(chunkX, chunkZ), CompletableFuture.completedFuture(null)));
-                    return;
+                    return new CapturedChunk(new ChunkPos(chunkX, chunkZ), CompletableFuture.completedFuture(null));
                 }
                 String status = BuiltInRegistries.CHUNK_STATUS.getKey(chunk.getPersistedStatus()).toString();
                 if (!policy.hasTerrain(status)) {
                     throw new IOException("Native chunk " + chunkX + "," + chunkZ + " has no completed terrain at " + status);
                 }
-                snapshot.complete(scheduleSnapshot(level, chunk));
-            } catch (Throwable failure) {
-                snapshot.completeExceptionally(failure);
-            }
-        }).whenComplete((ignored, failure) -> {
-            if (failure != null) {
-                snapshot.completeExceptionally(failure);
+                return scheduleSnapshot(level, chunk);
+            } catch (IOException failure) {
+                throw new CompletionException(failure);
             }
         });
-        return snapshot.thenApplyAsync(captured -> {
+        CompletableFuture<T> result = snapshot.thenApplyAsync(captured -> {
             try {
-                long deadline = System.nanoTime() + WRITE_TIMEOUT_NANOS;
                 CompoundTag data = awaitSnapshot(level, captured, deadline);
                 Checkpoint checkpoint = checkpoint(chunkX, chunkZ, data, policy);
                 awaitWrite(level, checkpoint.chunk(), deadline);
@@ -85,64 +80,89 @@ public final class NativeTerrainSnapshotsImpl implements NativeTerrainSnapshots 
                 throw new CompletionException(failure);
             }
         });
+        result.whenComplete((ignored, failure) -> {
+            if (failure != null) {
+                snapshot.cancel(false);
+            }
+        });
+        return result.orTimeout(WRITE_TIMEOUT_NANOS, TimeUnit.NANOSECONDS);
     }
 
     @Override
     public CompletableFuture<Void> flush(World world, SnapshotPolicy<?> policy) {
         ServerLevel level = ((CraftWorld) world).getHandle();
         List<NewChunkHolder> holders = level.moonrise$getChunkTaskScheduler().chunkHolderManager.getChunkHolders();
+        long deadline = System.nanoTime() + WRITE_TIMEOUT_NANOS;
         return CompletableFuture.runAsync(() -> {
             try {
-                flushSnapshots(world, level, holders, policy);
+                flushSnapshots(world, level, holders, policy, deadline);
             } catch (IOException failure) {
                 throw new CompletionException(failure);
             }
         });
     }
 
-    static void flushSnapshots(World world, ServerLevel level, List<NewChunkHolder> holders, SnapshotPolicy<?> policy) throws IOException {
-        long deadline = System.nanoTime() + WRITE_TIMEOUT_NANOS;
+    static void flushSnapshots(World world, ServerLevel level, List<NewChunkHolder> holders,
+                               SnapshotPolicy<?> policy, long deadline) throws IOException {
         List<Checkpoint> checkpoints = new ArrayList<>(holders.size());
         for (int offset = 0; offset < holders.size(); offset += SNAPSHOT_BATCH_SIZE) {
             int end = Math.min(holders.size(), offset + SNAPSHOT_BATCH_SIZE);
-            List<CompletableFuture<CapturedChunk>> snapshots = requestSnapshots(world, level, holders.subList(offset, end), policy);
-            awaitSnapshots(snapshots, deadline);
-            for (CompletableFuture<CapturedChunk> future : snapshots) {
-                CapturedChunk captured = future.join();
-                CompoundTag data = awaitSnapshot(level, captured, deadline);
-                checkpoints.add(checkpoint(captured.chunk().x(), captured.chunk().z(), data, policy));
-            }
-            for (int index = offset; index < end; index++) {
-                awaitWrite(level, checkpoints.get(index).chunk(), deadline);
+            List<CompletableFuture<CapturedChunk>> snapshots = requestSnapshots(level, holders.subList(offset, end), deadline);
+            try {
+                awaitSnapshots(snapshots, deadline);
+                for (CompletableFuture<CapturedChunk> future : snapshots) {
+                    CapturedChunk captured = future.join();
+                    CompoundTag data = awaitSnapshot(level, captured, deadline);
+                    checkpoints.add(checkpoint(captured.chunk().x(), captured.chunk().z(), data, policy));
+                }
+                for (int index = offset; index < end; index++) {
+                    awaitWrite(level, checkpoints.get(index).chunk(), deadline);
+                }
+            } finally {
+                for (CompletableFuture<CapturedChunk> snapshot : snapshots) {
+                    snapshot.cancel(false);
+                }
             }
         }
         finishCheckpoint(level, world.getWorldFolder().toPath(), checkpoints, policy);
     }
 
     private static List<CompletableFuture<CapturedChunk>> requestSnapshots(
-            World world, ServerLevel level, List<NewChunkHolder> holders, SnapshotPolicy<?> policy) {
+            ServerLevel level, List<NewChunkHolder> holders, long deadlineNanos) {
         List<CompletableFuture<CapturedChunk>> snapshots = new ArrayList<>(holders.size());
         for (NewChunkHolder original : holders) {
             ChunkPos position = new ChunkPos(original.chunkX, original.chunkZ);
-            CompletableFuture<CapturedChunk> snapshot = new CompletableFuture<>();
-            snapshots.add(snapshot);
-            policy.runRegion(new SnapshotPolicy.Region(world, position.x(), position.z()), () -> {
+            snapshots.add(runSnapshotTask(level, position, deadlineNanos, () -> {
+                NewChunkHolder holder = level.moonrise$getChunkTaskScheduler().chunkHolderManager
+                        .getChunkHolder(position.x(), position.z());
+                ChunkAccess chunk = holder == null ? null : holder.getCurrentChunk();
+                return chunk != null && chunk.isUnsaved() ? scheduleSnapshot(level, chunk)
+                        : new CapturedChunk(position, CompletableFuture.completedFuture(null));
+            }));
+        }
+        return snapshots;
+    }
+
+    static CompletableFuture<CapturedChunk> runSnapshotTask(
+            ServerLevel level, ChunkPos position, long deadlineNanos,
+            Supplier<CapturedChunk> action) {
+        CompletableFuture<CapturedChunk> snapshot = new CompletableFuture<>();
+        try {
+            level.moonrise$getChunkTaskScheduler().scheduleChunkTask(position.x(), position.z(), () -> {
+                if (snapshot.isDone()) {
+                    return;
+                }
                 try {
-                    NewChunkHolder holder = level.moonrise$getChunkTaskScheduler().chunkHolderManager
-                            .getChunkHolder(position.x(), position.z());
-                    ChunkAccess chunk = holder == null ? null : holder.getCurrentChunk();
-                    snapshot.complete(chunk != null && chunk.isUnsaved() ? scheduleSnapshot(level, chunk)
-                            : new CapturedChunk(position, CompletableFuture.completedFuture(null)));
+                    checkWriteWait(position, deadlineNanos);
+                    snapshot.complete(action.get());
                 } catch (Throwable failure) {
                     snapshot.completeExceptionally(failure);
                 }
-            }).whenComplete((ignored, failure) -> {
-                if (failure != null) {
-                    snapshot.completeExceptionally(failure);
-                }
-            });
+            }, Priority.BLOCKING);
+        } catch (Throwable failure) {
+            snapshot.completeExceptionally(failure);
         }
-        return snapshots;
+        return snapshot;
     }
 
     private static void awaitSnapshots(List<CompletableFuture<CapturedChunk>> snapshots, long deadlineNanos)

@@ -28,6 +28,8 @@ public abstract class ReflectiveWorldRuntime implements NativeWorldRuntime {
 
     protected abstract Object createLevelStem(Object registryAccess, NamespacedKey dimensionTypeKey);
 
+    protected abstract Object readExistingWorldDataAndSettings(WorldRuntimeOptions options);
+
     public World create(WorldRuntimeOptions options, WorldRuntimeExecution execution) throws ReflectiveOperationException {
         RuntimeOperations operations = new RuntimeOperations(execution);
         Object storageAccess = null;
@@ -39,7 +41,9 @@ public abstract class ReflectiveWorldRuntime implements NativeWorldRuntime {
                 Object loadedWorldData = capabilities.paperWorldDataMethod().invoke(null, capabilities.minecraftServer(), dimensionKey, options.worldName());
                 Object worldLoadingInfo = capabilities.worldLoadingInfoConstructor().newInstance(options.environment(), stemKey, dimensionKey, options.persistent());
                 Object worldLoadingInfoAndData = capabilities.worldLoadingInfoAndDataConstructor().newInstance(worldLoadingInfo, loadedWorldData);
-                Object worldDataAndGenSettings = operations.createCurrentWorldDataAndSettings(capabilities, options.worldName());
+                Object worldDataAndGenSettings = options.existingWorldData()
+                        ? readExistingWorldDataAndSettings(options)
+                        : operations.createCurrentWorldDataAndSettings(capabilities, options.worldName());
                 if (!options.existingWorldData()) {
                     worldDataAndGenSettings = operations.applySeedToWorldDataAndGenSettings(worldDataAndGenSettings, options.seed());
                 }

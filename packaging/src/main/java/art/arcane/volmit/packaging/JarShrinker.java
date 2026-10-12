@@ -35,7 +35,7 @@ import java.util.zip.ZipFile;
 public final class JarShrinker {
     private static final String WARNING_PREFIX = "Warning: ";
     private static final Pattern TRAILING_CLASS = Pattern.compile("(?:class|interface) ([\\w.$]+)$");
-    private static final Pattern DEPENDENCY = Pattern.compile("^library class ([\\w.$]+) depends on program class ([\\w.$]+)$");
+    private static final Pattern DEPENDENCY = Pattern.compile("^library class ([\\w.$]+) (?:depends on|extends or implements) program class ([\\w.$]+)$");
     private static final Pattern MISPLACED = Pattern.compile("^class \\[.*] unexpectedly contains class \\[([\\w.$]+)]$");
 
     private JarShrinker() {

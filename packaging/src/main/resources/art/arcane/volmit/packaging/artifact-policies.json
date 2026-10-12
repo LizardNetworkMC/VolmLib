@@ -305,7 +305,6 @@
     {
       "name": "Iris Fabric",
       "filename": "Iris v* [[]Fabric] *.jar",
-      "max_bytes": 12478054,
       "modded": true,
       "forbidden_prefixes": [
         "org/bukkit/",
@@ -330,7 +329,6 @@
     {
       "name": "Iris Forge",
       "filename": "Iris v* [[]Forge] *.jar",
-      "max_bytes": 11639193,
       "modded": true,
       "forbidden_prefixes": [
         "org/bukkit/",
@@ -355,7 +353,6 @@
     {
       "name": "Iris NeoForge",
       "filename": "Iris v* [[]NeoForge] *.jar",
-      "max_bytes": 11639193,
       "modded": true,
       "forbidden_prefixes": [
         "org/bukkit/",

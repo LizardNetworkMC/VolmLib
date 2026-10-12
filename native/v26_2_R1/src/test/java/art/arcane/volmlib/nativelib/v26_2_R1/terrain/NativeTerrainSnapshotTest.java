@@ -29,12 +29,14 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
@@ -163,18 +165,21 @@ public class NativeTerrainSnapshotTest {
             Future<?> result = checkpoint.submit(() -> {
                 SnapshotPolicy<?> policy = mock(SnapshotPolicy.class);
                 try (MockedStatic<MoonriseRegionFileIO> io = mockStatic(MoonriseRegionFileIO.class)) {
-                    when(policy.runRegion(any(SnapshotPolicy.Region.class), any(Runnable.class)))
+                    when(fixture.scheduler.scheduleChunkTask(anyInt(), anyInt(), any(Runnable.class), eq(Priority.BLOCKING)))
                             .thenAnswer(invocation -> {
                                 requested.incrementAndGet();
-                                Runnable action = invocation.getArgument(1);
-                                return CompletableFuture.runAsync(action, owner);
+                                Runnable action = invocation.getArgument(2);
+                                owner.submit(action);
+                                return mock(PrioritisedExecutor.PrioritisedTask.class);
                             });
                     io.when(() -> MoonriseRegionFileIO.getPriority(eq(fixture.level), anyInt(), anyInt(),
                             eq(MoonriseRegionFileIO.RegionFileType.CHUNK_DATA))).thenAnswer(invocation -> {
                         firstBatchWaiting.countDown();
                         return writesBlocked.get() ? Priority.NORMAL : Priority.COMPLETING;
                     });
-                    NativeTerrainSnapshotsImpl.flushSnapshots(world, fixture.level, holders, policy);
+                    NativeTerrainSnapshotsImpl.flushSnapshots(world, fixture.level, holders, policy,
+                            System.nanoTime() + TimeUnit.SECONDS.toNanos(3));
+                    verify(policy, never()).runRegion(any(SnapshotPolicy.Region.class), any(Runnable.class));
                     io.verify(() -> MoonriseRegionFileIO.getPriority(fixture.level, 128, 0,
                             MoonriseRegionFileIO.RegionFileType.CHUNK_DATA), times(2));
                     return null;
@@ -194,6 +199,69 @@ public class NativeTerrainSnapshotTest {
         }
     }
 
+    @Test
+    public void terrainCaptureUsesTheCoordinateChunkQueueDuringSynchronousLoad() throws Exception {
+        try (SaveFixture fixture = new SaveFixture()) {
+            AtomicReference<Runnable> queued = new AtomicReference<>();
+            AtomicBoolean captured = new AtomicBoolean();
+            when(fixture.scheduler.scheduleChunkTask(eq(-7), eq(9), any(Runnable.class), eq(Priority.BLOCKING)))
+                    .thenAnswer(invocation -> {
+                        queued.set(invocation.getArgument(2));
+                        return mock(PrioritisedExecutor.PrioritisedTask.class);
+                    });
+            Thread owner = Thread.currentThread();
+            NativeTerrainSnapshotsImpl.CapturedChunk expected = new NativeTerrainSnapshotsImpl.CapturedChunk(
+                    new ChunkPos(-7, 9), CompletableFuture.completedFuture(null));
+            CompletableFuture<NativeTerrainSnapshotsImpl.CapturedChunk> result = NativeTerrainSnapshotsImpl.runSnapshotTask(
+                    fixture.level, expected.chunk(), System.nanoTime() + TimeUnit.SECONDS.toNanos(3), () -> {
+                        assertSame(owner, Thread.currentThread());
+                        captured.set(true);
+                        return expected;
+                    });
+
+            assertFalse(result.isDone());
+            assertFalse(captured.get());
+            queued.get().run();
+            assertSame(expected, result.get(3, TimeUnit.SECONDS));
+            assertTrue(captured.get());
+        }
+    }
+
+    @Test
+    public void abandonedAndExpiredTerrainCapturesDoNotSaveAfterTheTransition() throws Exception {
+        try (SaveFixture fixture = new SaveFixture()) {
+            List<Runnable> queued = new ArrayList<>();
+            AtomicInteger captures = new AtomicInteger();
+            when(fixture.scheduler.scheduleChunkTask(anyInt(), anyInt(), any(Runnable.class), eq(Priority.BLOCKING)))
+                    .thenAnswer(invocation -> {
+                        queued.add(invocation.getArgument(2));
+                        return mock(PrioritisedExecutor.PrioritisedTask.class);
+                    });
+            NativeTerrainSnapshotsImpl.CapturedChunk expected = new NativeTerrainSnapshotsImpl.CapturedChunk(
+                    new ChunkPos(0, 0), CompletableFuture.completedFuture(null));
+            CompletableFuture<NativeTerrainSnapshotsImpl.CapturedChunk> abandoned = NativeTerrainSnapshotsImpl.runSnapshotTask(
+                    fixture.level, expected.chunk(), System.nanoTime() + TimeUnit.SECONDS.toNanos(3), () -> {
+                        captures.incrementAndGet();
+                        return expected;
+                    });
+            CompletableFuture<NativeTerrainSnapshotsImpl.CapturedChunk> expired = NativeTerrainSnapshotsImpl.runSnapshotTask(
+                    fixture.level, expected.chunk(), System.nanoTime() - 1L, () -> {
+                        captures.incrementAndGet();
+                        return expected;
+                    });
+
+            assertTrue(abandoned.cancel(false));
+            for (Runnable task : queued) {
+                task.run();
+            }
+            assertEquals(0, captures.get());
+            assertTrue(abandoned.isCancelled());
+            assertTrue(expired.isCompletedExceptionally());
+            assertTrue(assertThrows(ExecutionException.class,
+                    () -> expired.get(3, TimeUnit.SECONDS)).getCause() instanceof IOException);
+        }
+    }
+
     private static void setField(Object instance, String name, Object value) throws Exception {
         Field field = instance.getClass().getField(name);
         field.setAccessible(true);
@@ -204,10 +272,10 @@ public class NativeTerrainSnapshotTest {
         private final BalancedPrioritisedThreadPool pool = new BalancedPrioritisedThreadPool(
                 TimeUnit.MILLISECONDS.toNanos(1), Executors.defaultThreadFactory());
         private final ServerLevel level = mock(ServerLevel.class);
+        private final ChunkTaskScheduler scheduler = mock(ChunkTaskScheduler.class);
 
         private SaveFixture() throws Exception {
             BalancedPrioritisedThreadPool.OrderedStreamGroup group = pool.createOrderedStreamGroup();
-            ChunkTaskScheduler scheduler = mock(ChunkTaskScheduler.class);
             setField(scheduler, "saveExecutor", group.createExecutor());
             setField(scheduler, "compressionExecutor", group.createExecutor());
             setField(scheduler, "chunkHolderManager", mock(ChunkHolderManager.class));

@@ -15,6 +15,7 @@ import org.gradle.api.tasks.Input;
 import org.gradle.api.tasks.InputFile;
 import org.gradle.api.tasks.InputFiles;
 import org.gradle.api.tasks.Internal;
+import org.gradle.api.tasks.Optional;
 import org.gradle.api.tasks.OutputFile;
 import org.gradle.api.tasks.PathSensitive;
 import org.gradle.api.tasks.PathSensitivity;
@@ -83,6 +84,7 @@ public abstract class PackedJar extends DefaultTask {
     public abstract RegularFileProperty getInputJar();
 
     @Input
+    @Optional
     public abstract Property<Long> getMaximumBytes();
 
     @Input
@@ -121,7 +123,7 @@ public abstract class PackedJar extends DefaultTask {
         Map<String, byte[]> bootstrap = bootstrapClasses();
         PackOptions options = new PackOptions(getEntrypoints().get(), getJarAccessors().get(),
                 new NativeOptions(getNativeArtifacts().get(), getNativeManifestPath().get(), getNativeResourceDirectory().get()),
-                getMaximumBytes().get());
+                getMaximumBytes().getOrNull());
         PackResult result = writePackedJar(source, output, bootstrap, options);
         getLogger().lifecycle("{}: selected {} ({} -> {} bytes); {} bootstrap classes retained", output.getFileName(),
                 result.compressed() ? "XZ" : "ordinary jar", result.ordinaryBytes(), Files.size(output),
@@ -221,7 +223,7 @@ public abstract class PackedJar extends DefaultTask {
         byte[] packed = writeJar(outer, false);
         boolean compressedRuntime = packed.length < ordinary.length;
         byte[] selected = compressedRuntime ? packed : ordinary;
-        if (selected.length > options.maximumBytes()) {
+        if (options.maximumBytes() != null && selected.length > options.maximumBytes()) {
             throw new IOException("Selected jar exceeds " + options.maximumBytes() + " byte budget: " + selected.length);
         }
         Files.createDirectories(output.toAbsolutePath().getParent());
@@ -584,7 +586,7 @@ public abstract class PackedJar extends DefaultTask {
     record Descriptor(String pluginName, List<String> entrypoints) {
     }
 
-    record PackOptions(List<String> entrypoints, List<String> jarAccessors, NativeOptions natives, long maximumBytes) {
+    record PackOptions(List<String> entrypoints, List<String> jarAccessors, NativeOptions natives, Long maximumBytes) {
     }
 
     record NativeOptions(Map<String, File> artifacts, String manifestPath, String resourceDirectory) {

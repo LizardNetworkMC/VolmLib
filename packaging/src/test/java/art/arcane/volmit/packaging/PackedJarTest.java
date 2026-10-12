@@ -100,6 +100,12 @@ public class PackedJarTest {
         assertTrue(Files.size(directory.resolve("build/libs/packed-fixture-packed.jar")) <= intermediateBudget);
         Files.writeString(buildScript, build.replace("maximumBytes = 7600000", "maximumBytes = " + (selectedBytes - 1)));
         assertTrue(runner.buildAndFail().getOutput().contains("Selected jar exceeds"));
+        Files.writeString(buildScript, build.replace("maximumBytes = 7600000", "modded = true"));
+        runner.build();
+        assertEquals(selectedBytes, Files.size(directory.resolve("build/libs/packed-fixture-packed.jar")));
+        Files.writeString(buildScript, build.replace("maximumBytes = 7600000", "modded = true; maximumBytes = 1"));
+        runner.build();
+        assertEquals(selectedBytes, Files.size(directory.resolve("build/libs/packed-fixture-packed.jar")));
     }
 
     @Test
@@ -242,7 +248,7 @@ public class PackedJarTest {
         Files.write(original, PackedJar.writeJar(simplePlugin("Budget"), false));
         IOException failure = assertThrows(IOException.class, () -> PackedJar.writePackedJar(original, output,
                 PackedJar.bootstrapClasses(), new PackedJar.PackOptions(List.of(), List.of(),
-                        PackedJar.NativeOptions.empty(), 1)));
+                        PackedJar.NativeOptions.empty(), 1L)));
         assertTrue(failure.getMessage().contains("byte budget"));
         assertFalse(Files.exists(output));
     }

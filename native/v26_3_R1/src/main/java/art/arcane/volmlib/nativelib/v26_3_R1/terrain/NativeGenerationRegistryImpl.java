@@ -1,10 +1,10 @@
 package art.arcane.volmlib.nativelib.v26_3_R1.terrain;
 
 import art.arcane.volmlib.nativelib.terrain.NativeGenerationRegistry;
-import com.google.gson.JsonElement;
-import com.google.gson.JsonParser;
 import com.mojang.serialization.Codec;
-import com.mojang.serialization.JsonOps;
+import java.io.IOException;
+import net.minecraft.nbt.Tag;
+import net.minecraft.nbt.NbtOps;
 import net.minecraft.core.Registry;
 import net.minecraft.core.RegistryAccess;
 import net.minecraft.core.registries.Registries;
@@ -104,11 +104,15 @@ public final class NativeGenerationRegistryImpl implements NativeGenerationRegis
     }
 
     private static <T> Definition canonicalize(RegistryAccess access, Codec<T> codec, String sourceJson) {
-        RegistryOps<JsonElement> ops = RegistryOps.create(JsonOps.INSTANCE, access);
-        JsonElement source = JsonParser.parseString(Objects.requireNonNull(sourceJson, "sourceJson"));
-        T decoded = codec.parse(ops, source).getOrThrow(IllegalArgumentException::new);
-        JsonElement encoded = codec.encodeStart(ops, decoded).getOrThrow(IllegalStateException::new);
-        return Definition.exactJson(encoded.toString());
+        RegistryOps<Tag> ops = RegistryOps.create(NbtOps.INSTANCE, access);
+        try {
+            Tag source = RegistryDefinitionJson.toNbt(RegistryDefinitionJson.read(Objects.requireNonNull(sourceJson, "sourceJson")));
+            T decoded = codec.parse(ops, source).getOrThrow(IllegalArgumentException::new);
+            Tag encoded = codec.encodeStart(ops, decoded).getOrThrow(IllegalStateException::new);
+            return Definition.exactJson(RegistryDefinitionJson.encode(encoded));
+        } catch (IOException failure) {
+            throw new IllegalArgumentException("Invalid generated registry definition", failure);
+        }
     }
 
     private static <T> Definition exactRegistered(
@@ -124,9 +128,13 @@ public final class NativeGenerationRegistryImpl implements NativeGenerationRegis
             throw new IllegalStateException("Missing generated registry definition "
                     + registryKey.identifier() + " / " + resourceKey + ".");
         }
-        RegistryOps<JsonElement> ops = RegistryOps.create(JsonOps.INSTANCE, access);
-        JsonElement encoded = codec.encodeStart(ops, value).getOrThrow(IllegalStateException::new);
-        return Definition.exactJson(encoded.toString());
+        RegistryOps<Tag> ops = RegistryOps.create(NbtOps.INSTANCE, access);
+        Tag encoded = codec.encodeStart(ops, value).getOrThrow(IllegalStateException::new);
+        try {
+            return Definition.exactJson(RegistryDefinitionJson.encode(encoded));
+        } catch (IOException failure) {
+            throw new IllegalStateException("Native registry definition cannot be encoded", failure);
+        }
     }
 
     private static Identifier requireIdentifier(String resourceKey) {

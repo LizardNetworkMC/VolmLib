@@ -41,7 +41,7 @@ public final class JarArtifactAudit {
         shrinkReport.put("toleratedWarnings", shrink.toleratedWarnings());
         result.put("shrink", shrinkReport);
         Files.createDirectories(report.toPath().getParent());
-        Files.writeString(report.toPath(), new GsonBuilder().setPrettyPrinting().disableHtmlEscaping().create().toJson(result) + "\n",
+        Files.writeString(report.toPath(), new GsonBuilder().setPrettyPrinting().disableHtmlEscaping().serializeNulls().create().toJson(result) + "\n",
                 StandardCharsets.UTF_8);
         rejectErrors(audit);
     }
@@ -55,8 +55,8 @@ public final class JarArtifactAudit {
     private static Audit inspect(File artifact, PackagingArtifact policy, PackagingMode mode) throws IOException {
         List<String> errors = new ArrayList<>();
         List<String> warnings = new ArrayList<>();
-        long budget = policy.getEffectiveMaximumBytes();
-        if (artifact.length() > budget) {
+        Long budget = policy.getEffectiveMaximumBytes();
+        if (budget != null && artifact.length() > budget) {
             String overage = "Jar exceeds " + budget + " byte budget: " + artifact.length()
                     + (budget == PackagingArtifact.SPIGOT_CAP_BYTES ? " (Spigot cap)" : "");
             if (policy.isIntermediate()) {
@@ -114,7 +114,7 @@ public final class JarArtifactAudit {
         result.put("bytes", artifact.length());
         result.put("maximumBytes", policy.getMaximumBytes());
         result.put("effectiveMaximumBytes", budget);
-        result.put("budgetAppliesTo", policy.isIntermediate() ? "final distribution"
+        result.put("budgetAppliesTo", policy.isModded() ? "none" : policy.isIntermediate() ? "final distribution"
                 : policy.isPacked() ? "selected distribution" : "artifact");
         result.put("modded", policy.isModded());
         result.put("stripLocalVariables", policy.isStripLocalVariables());

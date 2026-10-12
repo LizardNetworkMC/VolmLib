@@ -24,8 +24,9 @@ public class PackagingArtifact implements Named {
 
     private final String name;
     private final ConfigurableFileCollection shrinkLibraries;
+    private final ConfigurableFileCollection authoritativeShrinkLibraries;
     private String taskName = "shadowJar";
-    private long maximumBytes;
+    private Long maximumBytes;
     private boolean modded;
     private boolean shrink = true;
     private boolean stripDirectories;
@@ -48,6 +49,7 @@ public class PackagingArtifact implements Named {
     public PackagingArtifact(String name, ObjectFactory objects) {
         this.name = name;
         this.shrinkLibraries = objects.fileCollection();
+        this.authoritativeShrinkLibraries = objects.fileCollection();
     }
 
     @Override
@@ -72,8 +74,8 @@ public class PackagingArtifact implements Named {
             for (JsonElement candidate : policies.getAsJsonArray("profiles")) {
                 JsonObject profile = candidate.getAsJsonObject();
                 if (profile.get("name").getAsString().equals(policyName)) {
-                    maximumBytes = profile.get("max_bytes").getAsLong();
                     modded = profile.has("modded") && profile.get("modded").getAsBoolean();
+                    maximumBytes = modded ? null : profile.get("max_bytes").getAsLong();
                     requiredEntries = readList(profile, "required_entries");
                     forbiddenPrefixes = readList(profile, "forbidden_prefixes");
                     shrinkKeep = readList(profile, "shrink_keep");
@@ -159,16 +161,16 @@ public class PackagingArtifact implements Named {
         this.packedJarAccessors = List.copyOf(packedJarAccessors);
     }
 
-    public long getMaximumBytes() {
-        return maximumBytes;
+    public Long getMaximumBytes() {
+        return modded ? null : maximumBytes;
     }
 
     public void setMaximumBytes(long maximumBytes) {
         this.maximumBytes = maximumBytes;
     }
 
-    public long getEffectiveMaximumBytes() {
-        return modded ? maximumBytes : Math.min(maximumBytes, SPIGOT_CAP_BYTES);
+    public Long getEffectiveMaximumBytes() {
+        return modded ? null : Math.min(maximumBytes, SPIGOT_CAP_BYTES);
     }
 
     public List<String> getPrunePrefixes() {
@@ -241,6 +243,10 @@ public class PackagingArtifact implements Named {
 
     public ConfigurableFileCollection getShrinkLibraries() {
         return shrinkLibraries;
+    }
+
+    public ConfigurableFileCollection getAuthoritativeShrinkLibraries() {
+        return authoritativeShrinkLibraries;
     }
 
     private List<String> readList(JsonObject profile, String key) {

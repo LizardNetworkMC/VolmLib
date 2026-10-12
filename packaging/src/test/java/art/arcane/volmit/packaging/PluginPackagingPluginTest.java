@@ -8,6 +8,9 @@ import org.gradle.testkit.runner.GradleRunner;
 import org.gradle.testkit.runner.TaskOutcome;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.NullSource;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.objectweb.asm.ClassReader;
 import org.objectweb.asm.ClassVisitor;
 import org.objectweb.asm.Label;
@@ -98,6 +101,83 @@ class PluginPackagingPluginTest {
         BuildResult missingReport = runner("jar").build();
         assertEquals(TaskOutcome.SUCCESS, missingReport.task(":jar").getOutcome());
         assertTrue(Files.exists(directory.resolve("build/reports/packaging/distribution.json")));
+    }
+
+    @Test
+    void authoritativePatchedLibraryWinsInheritedDefinitionsAndPreservesUnrelatedTypes() throws Exception {
+        fixture(1_000_000, "", false);
+        source("lib/Patched.java", "package lib; public class Patched { public int ownedRegistration() { return 42; } }");
+        source("owned/LibraryUse.java", "package owned; public class LibraryUse { public int read() { return new lib.Patched().ownedRegistration() + new lib.Unrelated().value(); } }");
+        Path inherited = directory.resolve("src/inherited/java/lib"); Files.createDirectories(inherited);
+        Files.writeString(inherited.resolve("Patched.java"), "package lib; public class Patched { public int original() { return 1; } }");
+        Files.writeString(inherited.resolve("Unrelated.java"), "package lib; public class Unrelated { public int value() { return 9; } }");
+        Files.writeString(directory.resolve("build.gradle"), """
+
+                sourceSets { inherited }
+                def inheritedJar = tasks.register('inheritedJar', Jar) {
+                    archiveFileName.set('inherited.jar')
+                    from(sourceSets.inherited.output)
+                }
+                dependencies { compileOnly files(inheritedJar) }
+                def actualLibrary = tasks.register('actualLibrary', Jar) {
+                    archiveFileName.set('actual-library.jar')
+                    from(sourceSets.main.output) { include('lib/Patched.class') }
+                }
+                tasks.named('jar') { exclude('lib/Patched.class') }
+                pluginPackaging.artifacts.distribution {
+                    authoritativeShrinkLibraries.from(files(actualLibrary))
+                    shrinkKeep = ['-keep class owned.LibraryUse { *; }']
+                }
+                """, StandardOpenOption.APPEND);
+        BuildResult result = runner("jar").build();
+        assertEquals(TaskOutcome.SUCCESS, result.task(":verifyDistributionPackaging").getOutcome());
+        Path artifact = directory.resolve("build/libs/example.jar");
+        Path actual = directory.resolve("build/libs/actual-library.jar");
+        Path raw = directory.resolve("build/libs/inherited.jar");
+        try (URLClassLoader loader = new URLClassLoader(new URL[]{artifact.toUri().toURL(), actual.toUri().toURL(), raw.toUri().toURL()}, null)) {
+            Class<?> use = loader.loadClass("owned.LibraryUse");
+            assertEquals(51, use.getMethod("read").invoke(use.getConstructor().newInstance()));
+        }
+        assertFalse(Files.readString(directory.resolve("build/reports/packaging/distribution-shrink-warnings.txt")).contains("Warning:"));
+    }
+
+    @Test
+    void authorityGeneratedInsideTheProducerHasNoSelfDependencyOrInputOutputCycle() throws IOException {
+        fixture(1_000_000, "", false);
+        source("lib/Actual.java", "package lib; public class Actual { public int value() { return 7; } }");
+        Files.writeString(directory.resolve("build.gradle"), """
+
+                def authority = layout.buildDirectory.file('library-authority.jar')
+                tasks.named('jar') {
+                    exclude('lib/Actual.class')
+                    outputs.file(authority)
+                    doLast {
+                        ant.jar(destfile: authority.get().asFile) {
+                            fileset(dir: sourceSets.main.output.classesDirs.singleFile) { include(name: 'lib/Actual.class') }
+                        }
+                    }
+                }
+                pluginPackaging.artifacts.distribution.authoritativeShrinkLibraries.from(authority)
+                """, StandardOpenOption.APPEND);
+        runner("jar").build();
+        assertTrue(Files.isRegularFile(directory.resolve("build/library-authority.jar")));
+        BuildResult cached = runner("jar").build();
+        assertEquals(TaskOutcome.UP_TO_DATE, cached.task(":jar").getOutcome());
+    }
+
+    @Test
+    void authoritativeLibraryConflictingWithTheProgramRefusesWithoutAWarningWaiver() throws IOException {
+        fixture(1_000_000, "", false);
+        Files.writeString(directory.resolve("build.gradle"), """
+
+                def conflicting = tasks.register('conflictingLibrary', Jar) {
+                    archiveFileName.set('conflicting.jar')
+                    from(sourceSets.main.output) { include('owned/Main.class') }
+                }
+                pluginPackaging.artifacts.distribution.authoritativeShrinkLibraries.from(files(conflicting))
+                """, StandardOpenOption.APPEND);
+        BuildResult result = runner("jar").buildAndFail();
+        assertTrue(result.getOutput().contains("Authoritative shrink library conflicts with program classes"), result.getOutput());
     }
 
     @Test
@@ -238,18 +318,46 @@ class PluginPackagingPluginTest {
         assertTrue(report.contains("\"reason\": \"volmitShrink=false\""), report);
     }
 
-    @Test
-    void moddedProfileSkipsShrinkAndIgnoresTheSpigotCap() throws IOException {
-        fixture(9_000_000, "modded = true", true);
-        BuildResult result = runner("jar", "verifyPluginJars").build();
-        assertEquals(TaskOutcome.SUCCESS, result.task(":verifyDistributionPackaging").getOutcome());
-        assertTrue(directory.resolve("build/libs/example.jar").toFile().length() > SPIGOT_CAP);
-        try (ZipFile jar = new ZipFile(directory.resolve("build/libs/example.jar").toFile())) {
-            assertNotNull(jar.getEntry("owned/Unused.class"));
+    @ParameterizedTest
+    @NullSource
+    @ValueSource(longs = {1, 0, 9_000_000})
+    void moddedProfileSkipsShrinkAndIgnoresAllSizeBudgets(Long maximumBytes) throws IOException {
+        fixture(maximumBytes == null ? 1 : maximumBytes, "modded = true", true);
+        if (maximumBytes == null) {
+            omitMaximumBytes();
         }
-        String report = Files.readString(directory.resolve("build/reports/packaging/distribution.json"));
-        assertTrue(report.contains("\"applied\": false"), report);
-        assertTrue(report.contains("\"reason\": \"modded profile\""), report);
+        for (String mode : List.of("release", "dev")) {
+            BuildResult result = runner("jar", "verifyPluginJars", "-PvolmitPackaging=" + mode).build();
+            assertEquals(TaskOutcome.SUCCESS, result.task(":verifyDistributionPackaging").getOutcome());
+            assertTrue(Files.size(directory.resolve("build/libs/example.jar")) > SPIGOT_CAP);
+            try (ZipFile jar = new ZipFile(directory.resolve("build/libs/example.jar").toFile())) {
+                assertNotNull(jar.getEntry("owned/Unused.class"));
+            }
+            JsonObject report = report();
+            assertEquals(mode, report.get("mode").getAsString(), report.toString());
+            assertTrue(report.get("maximumBytes").isJsonNull(), report.toString());
+            assertTrue(report.get("effectiveMaximumBytes").isJsonNull(), report.toString());
+            assertEquals("none", report.get("budgetAppliesTo").getAsString(), report.toString());
+            assertTrue(strings(report, "warnings").isEmpty(), report.toString());
+            assertTrue(strings(report, "errors").isEmpty(), report.toString());
+            assertFalse(result.getOutput().contains("byte budget"), result.getOutput());
+            JsonObject shrink = report.getAsJsonObject("shrink");
+            assertFalse(shrink.get("applied").getAsBoolean(), report.toString());
+            assertEquals("modded profile", shrink.get("reason").getAsString(), report.toString());
+        }
+    }
+
+    @ParameterizedTest
+    @NullSource
+    @ValueSource(longs = {0, -1})
+    void nonModdedMissingOrNonPositiveBudgetFailsConfiguration(Long maximumBytes) throws IOException {
+        fixture(maximumBytes == null ? 1 : maximumBytes, "", false);
+        if (maximumBytes == null) {
+            omitMaximumBytes();
+        }
+        BuildResult result = runner("jar").buildAndFail();
+        assertTrue(result.getOutput().contains("positive jar budget"), result.getOutput());
+        assertFalse(Files.exists(directory.resolve("build/libs/example.jar")));
     }
 
     @Test
@@ -499,6 +607,11 @@ class PluginPackagingPluginTest {
                 Files.copy(file, target);
             }
         }
+    }
+
+    private void omitMaximumBytes() throws IOException {
+        Path buildScript = directory.resolve("build.gradle");
+        Files.writeString(buildScript, Files.readString(buildScript).replace("maximumBytes = 1\n", ""));
     }
 
     private void fixture(long maximumBytes, String artifactExtras, boolean oversized) throws IOException {
