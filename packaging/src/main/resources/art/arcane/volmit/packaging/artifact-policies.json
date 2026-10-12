@@ -2,7 +2,7 @@
   "profiles": [
     {
       "name": "Adapt",
-      "filename": "Adapt-*.jar",
+      "filename": "Adapt v* [[]CraftBukkit] *.jar",
       "max_bytes": 6000000,
       "forbidden_prefixes": [
         "org/bukkit/",
@@ -34,7 +34,7 @@
     },
     {
       "name": "BileTools",
-      "filename": "BileTools-*.jar",
+      "filename": "BileTools v* [[]CraftBukkit] *.jar",
       "max_bytes": 1000000,
       "forbidden_prefixes": [
         "org/bukkit/",
@@ -63,7 +63,7 @@
     },
     {
       "name": "Gloss",
-      "filename": "Gloss-*.jar",
+      "filename": "Gloss v* [[]CraftBukkit] *.jar",
       "max_bytes": 7600000,
       "forbidden_prefixes": [
         "org/bukkit/",
@@ -103,7 +103,7 @@
     },
     {
       "name": "HiddenOre",
-      "filename": "HiddenOre-*.jar",
+      "filename": "HiddenOre v* [[]CraftBukkit] *.jar",
       "max_bytes": 850000,
       "forbidden_prefixes": [
         "org/bukkit/",
@@ -131,7 +131,7 @@
     },
     {
       "name": "React",
-      "filename": "React-*.jar",
+      "filename": "React v* [[]CraftBukkit] *.jar",
       "max_bytes": 3600000,
       "forbidden_prefixes": [
         "org/bukkit/",
@@ -199,7 +199,7 @@
     },
     {
       "name": "Wormholes",
-      "filename": "Wormholes-*.jar",
+      "filename": "Wormholes v* [[]CraftBukkit] *.jar",
       "max_bytes": 7000000,
       "forbidden_prefixes": [
         "org/bukkit/",
