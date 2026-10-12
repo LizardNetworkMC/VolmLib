@@ -1,7 +1,6 @@
 package art.arcane.volmlib.util.inventorygui;
 
 import art.arcane.volmlib.util.scheduling.FoliaScheduler;
-import org.bukkit.Server;
 import org.bukkit.entity.Entity;
 import org.bukkit.entity.Player;
 import org.bukkit.inventory.Inventory;
@@ -13,17 +12,15 @@ import org.mockito.MockedStatic;
 
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.CountDownLatch;
-import java.util.concurrent.TimeUnit;
+import java.util.concurrent.CompletionException;
+import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.atomic.AtomicReference;
-import java.util.logging.Level;
-import java.util.logging.Logger;
 
 import static org.junit.Assert.assertFalse;
-import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertSame;
+import static org.junit.Assert.assertThrows;
 import static org.junit.Assert.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.same;
 import static org.mockito.Mockito.doThrow;
@@ -40,7 +37,7 @@ public class BukkitInventoryShutdownTest {
     private Entity entity;
     private Inventory inventory;
     private InventoryView open;
-    private Logger logger;
+    private BukkitInventoryShutdown shutdown;
 
     @Before
     public void setUp() {
@@ -49,18 +46,16 @@ public class BukkitInventoryShutdownTest {
         entity = (Entity) player;
         inventory = mock(Inventory.class);
         open = mock(InventoryView.class);
-        logger = mock(Logger.class);
-        when(plugin.getServer()).thenReturn(mock(Server.class));
-        when(plugin.getLogger()).thenReturn(logger);
         when(player.getOpenInventory()).thenReturn(open);
         when(open.getTopInventory()).thenReturn(inventory);
+        shutdown = new BukkitInventoryShutdown(plugin, List.of(new BukkitInventoryShutdown.View(player, inventory)));
     }
 
     @Test
-    public void ownedInventoryClosesImmediately() {
+    public void ownedInventoryClosesImmediatelyEvenWhenPluginDisabled() {
         try (MockedStatic<FoliaScheduler> scheduler = mockStatic(FoliaScheduler.class)) {
             scheduler.when(() -> FoliaScheduler.isOwnedByCurrentRegion(entity)).thenReturn(true);
-            BukkitInventoryShutdown.drain(plugin, List.of(new BukkitInventoryShutdown.View(player, inventory)));
+            shutdown.closeOwned().join();
         }
         verify(player).closeInventory();
     }
@@ -70,50 +65,52 @@ public class BukkitInventoryShutdownTest {
         when(open.getTopInventory()).thenReturn(mock(Inventory.class));
         try (MockedStatic<FoliaScheduler> scheduler = mockStatic(FoliaScheduler.class)) {
             scheduler.when(() -> FoliaScheduler.isOwnedByCurrentRegion(entity)).thenReturn(true);
-            BukkitInventoryShutdown.drain(plugin, List.of(new BukkitInventoryShutdown.View(player, inventory)));
+            shutdown.closeAsync().join();
         }
         verify(player, never()).closeInventory();
     }
 
-    @Test(timeout = 5000L)
-    public void interruptionDoesNotReleaseUnfinishedOwnerCleanup() throws Exception {
-        CountDownLatch scheduled = new CountDownLatch(1);
+    @Test(timeout = 2000L)
+    public void managedCloseReturnsBeforeOwnerRunsAndObserverCancellationDoesNotCancelCleanup() {
         AtomicReference<Runnable> cleanup = new AtomicReference<>();
-        CompletableFuture<Boolean> completed = new CompletableFuture<>();
-        Thread closing = new Thread(() -> {
-            try (MockedStatic<FoliaScheduler> scheduler = mockStatic(FoliaScheduler.class)) {
-                scheduler.when(() -> FoliaScheduler.runEntity(same(plugin), same(entity), any(Runnable.class),
-                        eq(0L), any(Runnable.class))).thenAnswer(invocation -> {
-                    cleanup.set(invocation.getArgument(2, Runnable.class));
-                    scheduled.countDown();
-                    return true;
-                });
-                Thread.currentThread().interrupt();
-                BukkitInventoryShutdown.drain(plugin, List.of(new BukkitInventoryShutdown.View(player, inventory)));
-                completed.complete(Thread.currentThread().isInterrupted());
-            } catch (Throwable failure) {
-                completed.completeExceptionally(failure);
-            }
-        }, "Inventory-Shutdown-Test");
-        closing.setDaemon(true);
-        closing.start();
-        try {
-            assertTrue(scheduled.await(2L, TimeUnit.SECONDS));
-            long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(1L);
-            while (closing.getState() != Thread.State.WAITING && System.nanoTime() < deadline) {
-                Thread.sleep(1L);
-            }
-            assertEquals(Thread.State.WAITING, closing.getState());
-            assertFalse(completed.isDone());
+        try (MockedStatic<FoliaScheduler> scheduler = mockStatic(FoliaScheduler.class)) {
+            this.captureCleanup(scheduler, cleanup);
+            CompletableFuture<Void> observer = shutdown.closeAsync();
+            assertFalse(observer.isDone());
+            observer.cancel(true);
+            assertFalse(shutdown.completion().isDone());
             verify(player, never()).getOpenInventory();
             cleanup.get().run();
-            assertTrue(completed.get(2L, TimeUnit.SECONDS));
+            shutdown.completion().join();
             verify(player).closeInventory();
-        } finally {
-            if (cleanup.get() != null && !completed.isDone()) {
-                cleanup.get().run();
-            }
-            closing.join(1000L);
+        }
+    }
+
+    @Test(timeout = 2000L)
+    public void emergencyCloseRejectsAcceptedWorkAndSuppressesLateCallback() {
+        AtomicReference<Runnable> cleanup = new AtomicReference<>();
+        try (MockedStatic<FoliaScheduler> scheduler = mockStatic(FoliaScheduler.class)) {
+            this.captureCleanup(scheduler, cleanup);
+            CompletableFuture<Void> managed = shutdown.closeAsync();
+            CompletionException failure = assertThrows(CompletionException.class, () -> shutdown.closeOwned().join());
+            assertTrue(failure.getCause() instanceof RejectedExecutionException);
+            assertTrue(managed.isCompletedExceptionally());
+            cleanup.get().run();
+            verify(player, never()).getOpenInventory();
+        }
+    }
+
+    @Test(timeout = 2000L)
+    public void emergencyCloseCanTakeOverPendingWorkWhenCurrentThreadOwnsPlayer() {
+        AtomicReference<Runnable> cleanup = new AtomicReference<>();
+        try (MockedStatic<FoliaScheduler> scheduler = mockStatic(FoliaScheduler.class)) {
+            this.captureCleanup(scheduler, cleanup);
+            CompletableFuture<Void> managed = shutdown.closeAsync();
+            scheduler.when(() -> FoliaScheduler.isOwnedByCurrentRegion(entity)).thenReturn(true);
+            shutdown.closeOwned().join();
+            cleanup.get().run();
+            managed.join();
+            verify(player).closeInventory();
         }
     }
 
@@ -125,29 +122,51 @@ public class BukkitInventoryShutdownTest {
                 invocation.getArgument(4, Runnable.class).run();
                 return true;
             });
-            BukkitInventoryShutdown.drain(plugin, List.of(new BukkitInventoryShutdown.View(player, inventory)));
+            shutdown.closeAsync().join();
         }
         verify(player, never()).getOpenInventory();
-        verify(player, never()).closeInventory();
     }
 
     @Test(timeout = 2000L)
-    public void rejectedOwnerDispatchCompletesWithoutInventoryAccess() {
+    public void rejectedDispatchIsFailureEvenWhenSchedulerInvokesRetiredCallback() {
         try (MockedStatic<FoliaScheduler> scheduler = mockStatic(FoliaScheduler.class)) {
-            BukkitInventoryShutdown.drain(plugin, List.of(new BukkitInventoryShutdown.View(player, inventory)));
+            scheduler.when(() -> FoliaScheduler.runEntity(same(plugin), same(entity), any(Runnable.class),
+                    eq(0L), any(Runnable.class))).thenAnswer(invocation -> {
+                invocation.getArgument(4, Runnable.class).run();
+                return false;
+            });
+            CompletionException failure = assertThrows(CompletionException.class, () -> shutdown.closeAsync().join());
+            assertTrue(failure.getCause() instanceof RejectedExecutionException);
         }
         verify(player, never()).getOpenInventory();
-        verify(player, never()).closeInventory();
     }
 
     @Test(timeout = 2000L)
-    public void failedCloseLogsItsCauseAndCompletes() {
-        IllegalStateException failure = new IllegalStateException("Inventory close failed");
-        doThrow(failure).when(player).closeInventory();
+    public void emergencyCloseNeverSchedulesUnownedWork() {
+        try (MockedStatic<FoliaScheduler> scheduler = mockStatic(FoliaScheduler.class)) {
+            assertThrows(CompletionException.class, () -> shutdown.closeOwned().join());
+            scheduler.verify(() -> FoliaScheduler.runEntity(same(plugin), same(entity), any(Runnable.class),
+                    eq(0L), any(Runnable.class)), never());
+        }
+        verify(player, never()).getOpenInventory();
+    }
+
+    @Test(timeout = 2000L)
+    public void closeFailureIsReportedToManagedCaller() {
+        IllegalStateException cause = new IllegalStateException("Inventory close failed");
+        doThrow(cause).when(player).closeInventory();
         try (MockedStatic<FoliaScheduler> scheduler = mockStatic(FoliaScheduler.class)) {
             scheduler.when(() -> FoliaScheduler.isOwnedByCurrentRegion(entity)).thenReturn(true);
-            BukkitInventoryShutdown.drain(plugin, List.of(new BukkitInventoryShutdown.View(player, inventory)));
+            CompletionException failure = assertThrows(CompletionException.class, () -> shutdown.closeAsync().join());
+            assertSame(cause, failure.getCause());
         }
-        verify(logger).log(eq(Level.SEVERE), anyString(), same(failure));
+    }
+
+    private void captureCleanup(MockedStatic<FoliaScheduler> scheduler, AtomicReference<Runnable> cleanup) {
+        scheduler.when(() -> FoliaScheduler.runEntity(same(plugin), same(entity), any(Runnable.class),
+                eq(0L), any(Runnable.class))).thenAnswer(invocation -> {
+            cleanup.set(invocation.getArgument(2, Runnable.class));
+            return true;
+        });
     }
 }

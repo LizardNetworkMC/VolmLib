@@ -515,7 +515,7 @@ public final class FoliaScheduler {
 
     private static boolean isEntityActive(Entity entity) {
         try {
-            return entity.isValid();
+            return entity instanceof Player player ? player.isOnline() : entity.isValid();
         } catch (Throwable ignored) {
             return false;
         }

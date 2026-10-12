@@ -29,6 +29,7 @@ import org.bukkit.event.inventory.InventoryCloseEvent;
 import org.bukkit.event.inventory.InventoryDragEvent;
 import org.bukkit.event.inventory.InventoryOpenEvent;
 import org.bukkit.event.player.AsyncPlayerChatEvent;
+import org.bukkit.event.player.PlayerCommandPreprocessEvent;
 import org.bukkit.event.player.PlayerQuitEvent;
 import org.bukkit.event.server.PluginDisableEvent;
 import org.bukkit.inventory.Inventory;
@@ -42,14 +43,18 @@ import java.io.IOException;
 import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.RejectedExecutionException;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Consumer;
 import java.util.function.BiFunction;
 import java.util.function.Function;
@@ -72,9 +77,14 @@ public final class BukkitConfigEditor implements Listener, AutoCloseable {
     private final Map<UUID, Session> sessions = new ConcurrentHashMap<>();
     private final Map<UUID, Prompt> prompts = new ConcurrentHashMap<>();
     private final Map<UUID, BukkitInventoryShutdown.View> openInventories = new ConcurrentHashMap<>();
+    private final Set<CompletableFuture<Void>> openings = new HashSet<>();
     private volatile EditorLayout layout;
     private volatile Feedback feedback;
     private volatile boolean closed;
+    private BukkitInventoryShutdown inventoryShutdown;
+    private CompletableFuture<Void> shutdownCompletion;
+    private boolean shutdownFailureObserved;
+    private boolean listenerReleased;
 
     private BukkitConfigEditor(Plugin plugin, Options options) {
         this.plugin = Objects.requireNonNull(plugin, "plugin");
@@ -172,16 +182,82 @@ public final class BukkitConfigEditor implements Listener, AutoCloseable {
 
     @Override
     public synchronized void close() {
-        if (closed) {
-            return;
+        close(!plugin.isEnabled());
+    }
+
+    private synchronized void close(boolean terminal) {
+        BukkitInventoryShutdown shutdown = this.prepareClose();
+        if (terminal) {
+            shutdown.closeOwned();
+        } else {
+            shutdown.closeAsync();
+        }
+        if (!this.shutdownFailureObserved) {
+            this.shutdownFailureObserved = true;
+            this.shutdownCompletion.whenComplete((ignored, failure) -> {
+                if (failure != null) {
+                    plugin.getLogger().log(Level.SEVERE, "Could not close every configuration editor inventory", failure);
+                }
+            });
+        }
+    }
+
+    public synchronized CompletableFuture<Void> closeAsync() {
+        this.prepareClose().closeAsync();
+        return this.shutdownCompletion.copy();
+    }
+
+    private BukkitInventoryShutdown prepareClose() {
+        if (this.inventoryShutdown != null && !this.shutdownCompletion.isCompletedExceptionally()) {
+            return this.inventoryShutdown;
         }
         closed = true;
         sessions.clear();
         prompts.clear();
         worker.shutdownNow();
-        BukkitInventoryShutdown.drain(plugin, openInventories.values());
-        openInventories.clear();
-        HandlerList.unregisterAll(this);
+        this.inventoryShutdown = new BukkitInventoryShutdown(plugin, openInventories.values());
+        List<CompletableFuture<Void>> completions = new ArrayList<>(openings);
+        completions.add(this.inventoryShutdown.completion());
+        this.shutdownCompletion = CompletableFuture.allOf(completions.toArray(CompletableFuture[]::new));
+        this.shutdownFailureObserved = false;
+        BukkitInventoryShutdown attempt = this.inventoryShutdown;
+        this.shutdownCompletion.whenComplete((ignored, failure) -> {
+            synchronized (this) {
+                if (this.inventoryShutdown == attempt && failure == null) {
+                    openInventories.clear();
+                    releaseClosedListener();
+                }
+            }
+        });
+        return this.inventoryShutdown;
+    }
+
+    private synchronized CompletableFuture<Void> beginOpening(Session session) {
+        if (!active(session)) {
+            return null;
+        }
+        CompletableFuture<Void> opening = new CompletableFuture<>();
+        openings.add(opening);
+        return opening;
+    }
+
+    private void finishOpening(CompletableFuture<Void> opening, Throwable failure) {
+        synchronized (this) {
+            openings.remove(opening);
+        }
+        if (failure == null) {
+            opening.complete(null);
+        } else {
+            opening.completeExceptionally(failure);
+        }
+        releaseClosedListener();
+    }
+
+    private synchronized void releaseClosedListener() {
+        if (closed && !listenerReleased && openInventories.isEmpty() && openings.isEmpty()) {
+            listenerReleased = true;
+            HandlerList.unregisterAll(this);
+        }
     }
 
     @EventHandler(priority = EventPriority.HIGHEST)
@@ -190,6 +266,9 @@ public final class BukkitConfigEditor implements Listener, AutoCloseable {
             return;
         }
         event.setCancelled(true);
+        if (closed) {
+            return;
+        }
         if (!(event.getWhoClicked() instanceof Player player) || !player.getUniqueId().equals(holder.owner)) {
             return;
         }
@@ -199,7 +278,7 @@ public final class BukkitConfigEditor implements Listener, AutoCloseable {
             return;
         }
         FoliaScheduler.runEntity(plugin, player, () -> {
-            if (BukkitInventoryViews.top(player.getOpenInventory()).getHolder() == holder) {
+            if (!closed && BukkitInventoryViews.top(player.getOpenInventory()).getHolder() == holder) {
                 LanguageAudience.run(player.getUniqueId(), () -> click(player, holder, slot, clickType));
             }
         }, 1L);
@@ -223,6 +302,7 @@ public final class BukkitConfigEditor implements Listener, AutoCloseable {
                 && holder.session.view == holder.view && !prompts.containsKey(owner)) {
             sessions.remove(owner, holder.session);
         }
+        releaseClosedListener();
     }
 
     @EventHandler
@@ -235,15 +315,27 @@ public final class BukkitConfigEditor implements Listener, AutoCloseable {
     @EventHandler(priority = EventPriority.LOWEST)
     public void onChat(AsyncPlayerChatEvent event) {
         Player player = event.getPlayer();
-        Prompt prompt = prompts.remove(player.getUniqueId());
+        Prompt prompt = prompts.get(player.getUniqueId());
         if (prompt == null) {
             return;
         }
         event.setCancelled(true);
+        if (!prompt.received.compareAndSet(false, true)) {
+            return;
+        }
         String input = event.getMessage();
+        Runnable retired = () -> retirePrompt(prompt);
         if (!FoliaScheduler.runEntity(plugin, player, () -> completePrompt(player, prompt, input), 0L,
-                () -> sessions.remove(prompt.session().owner, prompt.session()))) {
-            sessions.remove(prompt.session().owner, prompt.session());
+                retired)) {
+            retired.run();
+        }
+    }
+
+    @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = false)
+    public void onCommand(PlayerCommandPreprocessEvent event) {
+        UUID owner = event.getPlayer().getUniqueId();
+        if (prompts.containsKey(owner)) {
+            cancel(owner);
         }
     }
 
@@ -252,12 +344,13 @@ public final class BukkitConfigEditor implements Listener, AutoCloseable {
         UUID owner = event.getPlayer().getUniqueId();
         cancel(owner);
         openInventories.remove(owner);
+        releaseClosedListener();
     }
 
     @EventHandler(priority = EventPriority.MONITOR)
     public void onPluginDisable(PluginDisableEvent event) {
         if (event.getPlugin() == plugin) {
-            close();
+            close(true);
         }
     }
 
@@ -389,7 +482,7 @@ public final class BukkitConfigEditor implements Listener, AutoCloseable {
 
     private void completePrompt(Player player, Prompt prompt, String input) {
         Session session = prompt.session();
-        if (!active(session) || !allowed(player)) {
+        if (!prompts.remove(player.getUniqueId(), prompt) || !active(session) || !allowed(player)) {
             return;
         }
         if (input.equalsIgnoreCase("cancel")) {
@@ -547,17 +640,29 @@ public final class BukkitConfigEditor implements Listener, AutoCloseable {
         }
         inventory.setItem(CLOSE, item(Material.BARRIER,
                 navigationName(player, BukkitConfigMessages.CLOSE, options.presentation().theme().required()), List.of()));
-        session.view = view;
-        player.openInventory(inventory);
-        if (BukkitInventoryViews.top(player.getOpenInventory()) == inventory) {
-            BukkitInventoryShutdown.View opened = new BukkitInventoryShutdown.View(player, inventory);
-            openInventories.put(session.owner, opened);
-            if (!active(session)) {
-                player.closeInventory();
-                openInventories.remove(session.owner, opened);
+        CompletableFuture<Void> opening = beginOpening(session);
+        if (opening == null) {
+            return;
+        }
+        Throwable openingFailure = null;
+        try {
+            session.view = view;
+            player.openInventory(inventory);
+            if (BukkitInventoryViews.top(player.getOpenInventory()) == inventory) {
+                BukkitInventoryShutdown.View opened = new BukkitInventoryShutdown.View(player, inventory);
+                openInventories.put(session.owner, opened);
+                if (!active(session)) {
+                    player.closeInventory();
+                    openInventories.remove(session.owner, opened);
+                }
+            } else {
+                sessions.remove(player.getUniqueId(), session);
             }
-        } else {
-            sessions.remove(player.getUniqueId(), session);
+        } catch (RuntimeException | LinkageError failure) {
+            openingFailure = failure;
+            throw failure;
+        } finally {
+            finishOpening(opening, openingFailure);
         }
     }
 
@@ -711,6 +816,12 @@ public final class BukkitConfigEditor implements Listener, AutoCloseable {
     private void cancel(UUID owner) {
         sessions.remove(owner);
         prompts.remove(owner);
+    }
+
+    private void retirePrompt(Prompt prompt) {
+        if (prompts.remove(prompt.session().owner, prompt)) {
+            sessions.remove(prompt.session().owner, prompt.session());
+        }
     }
 
     private void message(Player player, TextKey key, MessageArgument... arguments) {
@@ -944,7 +1055,23 @@ public final class BukkitConfigEditor implements Listener, AutoCloseable {
         }
     }
 
-    private record Prompt(Session session, ConfigEditorDocument.Entry entry) {
+    private static final class Prompt {
+        private final Session session;
+        private final ConfigEditorDocument.Entry entry;
+        private final AtomicBoolean received = new AtomicBoolean();
+
+        private Prompt(Session session, ConfigEditorDocument.Entry entry) {
+            this.session = session;
+            this.entry = entry;
+        }
+
+        private Session session() {
+            return session;
+        }
+
+        private ConfigEditorDocument.Entry entry() {
+            return entry;
+        }
     }
 
     private static final class Holder implements InventoryHolder {

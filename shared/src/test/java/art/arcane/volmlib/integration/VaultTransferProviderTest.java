@@ -135,6 +135,73 @@ public class VaultTransferProviderTest {
         verify(harness.economy, never()).withdrawPlayer(any(OfflinePlayer.class), anyDouble());
     }
 
+    @Test
+    public void precisionChecksRespectProviderDigitsWithoutAccountOrMoneyCalls() {
+        Harness harness = new Harness();
+        VaultEconomy.TransferProvider selected = harness.vault.transferProvider().orElseThrow();
+        when(harness.economy.fractionalDigits()).thenReturn(2);
+        assertTrue(selected.supportsPrecision(0));
+        assertTrue(selected.supportsPrecision(2));
+        assertFalse(selected.supportsPrecision(3));
+        when(harness.economy.fractionalDigits()).thenReturn(-1);
+        assertTrue(selected.supportsPrecision(0));
+        assertTrue(selected.supportsPrecision(18));
+        when(harness.economy.fractionalDigits()).thenReturn(-2);
+        assertFalse(selected.supportsPrecision(0));
+        assertFalse(selected.supportsPrecision(2));
+        verify(harness.economy, never()).hasAccount(any(OfflinePlayer.class));
+        verify(harness.economy, never()).getBalance(any(OfflinePlayer.class));
+        verify(harness.economy, never()).depositPlayer(any(OfflinePlayer.class), anyDouble());
+        verify(harness.economy, never()).withdrawPlayer(any(OfflinePlayer.class), anyDouble());
+    }
+
+    @Test
+    public void invalidPrecisionDoesNotQueryProviderMetadata() {
+        Harness harness = new Harness();
+        VaultEconomy.TransferProvider selected = harness.vault.transferProvider().orElseThrow();
+        assertFalse(selected.supportsPrecision(-1));
+        assertFalse(selected.supportsPrecision(19));
+        verify(harness.economy, never()).fractionalDigits();
+        verify(harness.economy, never()).depositPlayer(any(OfflinePlayer.class), anyDouble());
+        verify(harness.economy, never()).withdrawPlayer(any(OfflinePlayer.class), anyDouble());
+    }
+
+    @Test
+    public void replacedProviderCannotSupplyPrecisionForPinnedSelection() {
+        Harness harness = new Harness();
+        VaultEconomy.TransferProvider selected = harness.vault.transferProvider().orElseThrow();
+        when(harness.services.getRegistration(Economy.class)).thenReturn(null);
+        assertFalse(selected.supportsPrecision(0));
+        verify(harness.economy, never()).fractionalDigits();
+        verify(harness.economy, never()).depositPlayer(any(OfflinePlayer.class), anyDouble());
+        verify(harness.economy, never()).withdrawPlayer(any(OfflinePlayer.class), anyDouble());
+    }
+
+    @Test
+    public void providerReplacementDuringPrecisionLookupIsRejected() {
+        Harness harness = new Harness();
+        VaultEconomy.TransferProvider selected = harness.vault.transferProvider().orElseThrow();
+        when(harness.economy.fractionalDigits()).thenAnswer(ignored -> {
+            when(harness.services.getRegistration(Economy.class)).thenReturn(null);
+            return 2;
+        });
+        assertFalse(selected.supportsPrecision(2));
+        verify(harness.economy, never()).depositPlayer(any(OfflinePlayer.class), anyDouble());
+        verify(harness.economy, never()).withdrawPlayer(any(OfflinePlayer.class), anyDouble());
+    }
+
+    @Test
+    public void precisionFailureLogsFullStacktraceAndRejectsWithoutMutation() {
+        Harness harness = new Harness();
+        VaultEconomy.TransferProvider selected = harness.vault.transferProvider().orElseThrow();
+        IllegalStateException failure = new IllegalStateException("precision metadata unavailable");
+        when(harness.economy.fractionalDigits()).thenThrow(failure);
+        assertFalse(selected.supportsPrecision(2));
+        verify(harness.logger).log(eq(Level.WARNING), contains("precision"), eq(failure));
+        verify(harness.economy, never()).depositPlayer(any(OfflinePlayer.class), anyDouble());
+        verify(harness.economy, never()).withdrawPlayer(any(OfflinePlayer.class), anyDouble());
+    }
+
     private static VaultEconomy.TransferRequest request(VaultEconomy.TransferDirection direction) {
         return new VaultEconomy.TransferRequest(direction, 12D, "island transfer");
     }

@@ -2,7 +2,6 @@ package org.bukkit.entity;
 
 import net.md_5.bungee.api.ChatMessageType;
 import net.md_5.bungee.api.chat.BaseComponent;
-import org.bukkit.command.CommandSender;
 import org.bukkit.inventory.Inventory;
 import org.bukkit.inventory.InventoryView;
 import org.bukkit.inventory.PlayerInventory;
@@ -64,7 +63,7 @@ public interface Player {
     return null;
   }
 
-  class Spigot extends CommandSender.Spigot {
+  class Spigot extends Entity.Spigot {
     public void sendMessage(ChatMessageType position, BaseComponent... components) {
     }
   }

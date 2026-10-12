@@ -21,6 +21,7 @@ import org.bukkit.event.inventory.InventoryCloseEvent;
 import org.bukkit.event.inventory.InventoryDragEvent;
 import org.bukkit.event.inventory.InventoryOpenEvent;
 import org.bukkit.event.player.AsyncPlayerChatEvent;
+import org.bukkit.event.player.PlayerCommandPreprocessEvent;
 import org.bukkit.event.player.PlayerQuitEvent;
 import org.bukkit.event.server.PluginDisableEvent;
 import org.bukkit.inventory.Inventory;
@@ -35,6 +36,7 @@ import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.HashSet;
 import java.util.LinkedHashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -46,6 +48,7 @@ import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Consumer;
 import java.util.logging.Level;
 
@@ -66,10 +69,15 @@ final class BukkitLanguageEditor implements AutoCloseable, Listener {
     private final PluginLanguageEditor editor;
     private final Map<UUID, View> views = new ConcurrentHashMap<>();
     private final Map<UUID, BukkitInventoryShutdown.View> openInventories = new ConcurrentHashMap<>();
+    private final Set<CompletableFuture<Void>> openings = new HashSet<>();
     private final Map<UUID, Prompt> prompts = new ConcurrentHashMap<>();
     private final Map<UUID, CompletableFuture<PluginLanguageEditor.Document>> pending = new ConcurrentHashMap<>();
     private volatile DirectorMiniMenu.Theme theme;
     private volatile boolean closed;
+    private BukkitInventoryShutdown inventoryShutdown;
+    private CompletableFuture<Void> shutdownCompletion;
+    private boolean shutdownFailureObserved;
+    private boolean listenerReleased;
 
     BukkitLanguageEditor(Plugin plugin, Options options) {
         this.plugin = Objects.requireNonNull(plugin, "plugin");
@@ -113,6 +121,9 @@ final class BukkitLanguageEditor implements AutoCloseable, Listener {
             return;
         }
         event.setCancelled(true);
+        if (closed) {
+            return;
+        }
         if (!(event.getWhoClicked() instanceof Player player)) {
             return;
         }
@@ -122,7 +133,7 @@ final class BukkitLanguageEditor implements AutoCloseable, Listener {
         }
         views.put(player.getUniqueId(), holder.view);
         Runnable routing = () -> {
-            if (inventoryViewTopInventory(player.getOpenInventory()).getHolder() != holder) {
+            if (closed || inventoryViewTopInventory(player.getOpenInventory()).getHolder() != holder) {
                 return;
             }
             views.put(player.getUniqueId(), holder.view);
@@ -157,6 +168,7 @@ final class BukkitLanguageEditor implements AutoCloseable, Listener {
                 views.remove(playerId, holder.view);
             }
         }
+        releaseClosedListener();
     }
 
     @EventHandler
@@ -169,16 +181,26 @@ final class BukkitLanguageEditor implements AutoCloseable, Listener {
     @EventHandler(priority = EventPriority.LOWEST)
     public void onChat(AsyncPlayerChatEvent event) {
         Player player = event.getPlayer();
-        Prompt prompt = prompts.remove(player.getUniqueId());
+        Prompt prompt = prompts.get(player.getUniqueId());
         if (prompt == null) {
             return;
         }
         event.setCancelled(true);
+        if (!prompt.received.compareAndSet(false, true)) {
+            return;
+        }
         String input = event.getMessage();
-        UUID playerId = player.getUniqueId();
-        Runnable retired = () -> views.remove(playerId, prompt.view());
+        Runnable retired = () -> retirePrompt(player, prompt);
         if (!FoliaScheduler.runEntity(plugin, player, () -> submit(player, prompt, input), 0L, retired)) {
             retired.run();
+        }
+    }
+
+    @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = false)
+    public void onCommand(PlayerCommandPreprocessEvent event) {
+        UUID owner = event.getPlayer().getUniqueId();
+        if (prompts.containsKey(owner)) {
+            cancel(owner);
         }
     }
 
@@ -186,19 +208,46 @@ final class BukkitLanguageEditor implements AutoCloseable, Listener {
     public void onQuit(PlayerQuitEvent event) {
         openInventories.remove(event.getPlayer().getUniqueId());
         cancel(event.getPlayer().getUniqueId());
+        releaseClosedListener();
     }
 
     @EventHandler(priority = EventPriority.MONITOR)
     public void onPluginDisable(PluginDisableEvent event) {
         if (event.getPlugin() == plugin) {
-            close();
+            close(true);
         }
     }
 
     @Override
     public synchronized void close() {
-        if (closed) {
-            return;
+        close(!plugin.isEnabled());
+    }
+
+    private synchronized void close(boolean terminal) {
+        BukkitInventoryShutdown shutdown = this.prepareClose();
+        if (terminal) {
+            shutdown.closeOwned();
+        } else {
+            shutdown.closeAsync();
+        }
+        if (!this.shutdownFailureObserved) {
+            this.shutdownFailureObserved = true;
+            this.shutdownCompletion.whenComplete((ignored, failure) -> {
+                if (failure != null) {
+                    plugin.getLogger().log(Level.SEVERE, "Could not close every language editor inventory", failure);
+                }
+            });
+        }
+    }
+
+    public synchronized CompletableFuture<Void> closeAsync() {
+        this.prepareClose().closeAsync();
+        return this.shutdownCompletion.copy();
+    }
+
+    private BukkitInventoryShutdown prepareClose() {
+        if (this.inventoryShutdown != null && !this.shutdownCompletion.isCompletedExceptionally()) {
+            return this.inventoryShutdown;
         }
         closed = true;
         for (CompletableFuture<PluginLanguageEditor.Document> future : pending.values()) {
@@ -207,10 +256,50 @@ final class BukkitLanguageEditor implements AutoCloseable, Listener {
         pending.clear();
         prompts.clear();
         editor.close();
-        BukkitInventoryShutdown.drain(plugin, openInventories.values());
-        openInventories.clear();
         views.clear();
-        HandlerList.unregisterAll(this);
+        this.inventoryShutdown = new BukkitInventoryShutdown(plugin, openInventories.values());
+        List<CompletableFuture<Void>> completions = new ArrayList<>(openings);
+        completions.add(this.inventoryShutdown.completion());
+        this.shutdownCompletion = CompletableFuture.allOf(completions.toArray(CompletableFuture[]::new));
+        this.shutdownFailureObserved = false;
+        BukkitInventoryShutdown attempt = this.inventoryShutdown;
+        this.shutdownCompletion.whenComplete((ignored, failure) -> {
+            synchronized (this) {
+                if (this.inventoryShutdown == attempt && failure == null) {
+                    openInventories.clear();
+                    releaseClosedListener();
+                }
+            }
+        });
+        return this.inventoryShutdown;
+    }
+
+    private synchronized CompletableFuture<Void> beginOpening() {
+        if (closed) {
+            return null;
+        }
+        CompletableFuture<Void> opening = new CompletableFuture<>();
+        openings.add(opening);
+        return opening;
+    }
+
+    private void finishOpening(CompletableFuture<Void> opening, Throwable failure) {
+        synchronized (this) {
+            openings.remove(opening);
+        }
+        if (failure == null) {
+            opening.complete(null);
+        } else {
+            opening.completeExceptionally(failure);
+        }
+        releaseClosedListener();
+    }
+
+    private synchronized void releaseClosedListener() {
+        if (closed && !listenerReleased && openInventories.isEmpty() && openings.isEmpty()) {
+            listenerReleased = true;
+            HandlerList.unregisterAll(this);
+        }
     }
 
     private void click(Player player, View view, int slot) {
@@ -375,7 +464,7 @@ final class BukkitLanguageEditor implements AutoCloseable, Listener {
                     localized(player, BukkitLanguageMessages.EDITOR_INPUT_GUIDANCE)
             ));
         }
-        Runnable retired = () -> cancel(player.getUniqueId());
+        Runnable retired = () -> retirePrompt(player, prompt);
         if (!FoliaScheduler.runEntity(plugin, player, () -> {
             if (prompts.remove(player.getUniqueId(), prompt) && allowed(player)) {
                 message(player, BukkitLanguageMessages.EDITOR_INPUT_EXPIRED);
@@ -387,7 +476,8 @@ final class BukkitLanguageEditor implements AutoCloseable, Listener {
     }
 
     private void submit(Player player, Prompt prompt, String input) {
-        if (views.get(player.getUniqueId()) != prompt.view() || !allowed(player)) {
+        if (!prompts.remove(player.getUniqueId(), prompt)
+                || views.get(player.getUniqueId()) != prompt.view() || !allowed(player)) {
             return;
         }
         if (input.equalsIgnoreCase("cancel")) {
@@ -536,15 +626,30 @@ final class BukkitLanguageEditor implements AutoCloseable, Listener {
                     List.of()
             ));
         }
-        views.put(player.getUniqueId(), view);
-        player.openInventory(inventory);
-        if (inventoryViewTopInventory(player.getOpenInventory()) == inventory) {
-            BukkitInventoryShutdown.View opened = new BukkitInventoryShutdown.View(player, inventory);
-            openInventories.put(player.getUniqueId(), opened);
-            if (closed) {
-                player.closeInventory();
-                openInventories.remove(player.getUniqueId(), opened);
+        CompletableFuture<Void> opening = beginOpening();
+        if (opening == null) {
+            return;
+        }
+        Throwable openingFailure = null;
+        try {
+            views.put(player.getUniqueId(), view);
+            player.openInventory(inventory);
+            if (inventoryViewTopInventory(player.getOpenInventory()) == inventory) {
+                BukkitInventoryShutdown.View opened = new BukkitInventoryShutdown.View(player, inventory);
+                openInventories.put(player.getUniqueId(), opened);
+                if (closed) {
+                    player.closeInventory();
+                    openInventories.remove(player.getUniqueId(), opened);
+                }
             }
+        } catch (RuntimeException | LinkageError failure) {
+            openingFailure = failure;
+            throw failure;
+        } finally {
+            if (closed) {
+                views.remove(player.getUniqueId(), view);
+            }
+            finishOpening(opening, openingFailure);
         }
     }
 
@@ -707,6 +812,13 @@ final class BukkitLanguageEditor implements AutoCloseable, Listener {
         CompletableFuture<PluginLanguageEditor.Document> future = pending.remove(playerId);
         if (future != null) {
             future.cancel(true);
+        }
+    }
+
+    private void retirePrompt(Player player, Prompt prompt) {
+        UUID owner = player.getUniqueId();
+        if (prompts.remove(owner, prompt)) {
+            views.remove(owner, prompt.view());
         }
     }
 
@@ -1067,7 +1179,35 @@ final class BukkitLanguageEditor implements AutoCloseable, Listener {
                         int page, MessageKey key, Consumer<Player> back) {
     }
 
-    private record Prompt(View view, MessageKey key, String form, MessageValue expected) {
+    private static final class Prompt {
+        private final View view;
+        private final MessageKey key;
+        private final String form;
+        private final MessageValue expected;
+        private final AtomicBoolean received = new AtomicBoolean();
+
+        private Prompt(View view, MessageKey key, String form, MessageValue expected) {
+            this.view = view;
+            this.key = key;
+            this.form = form;
+            this.expected = expected;
+        }
+
+        private View view() {
+            return view;
+        }
+
+        private MessageKey key() {
+            return key;
+        }
+
+        private String form() {
+            return form;
+        }
+
+        private MessageValue expected() {
+            return expected;
+        }
     }
 
     private record Change(String key, String before, String after) {

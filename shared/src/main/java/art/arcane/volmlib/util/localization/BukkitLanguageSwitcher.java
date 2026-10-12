@@ -250,12 +250,22 @@ public final class BukkitLanguageSwitcher implements AutoCloseable, Listener {
     }
 
     @Override
-    public void close() {
+    public synchronized void close() {
+        editor.close();
+        this.releaseRegistration();
+    }
+
+    public synchronized CompletableFuture<Void> closeAsync() {
+        CompletableFuture<Void> completion = editor.closeAsync();
+        this.releaseRegistration();
+        return completion;
+    }
+
+    private void releaseRegistration() {
         if (closed) {
             return;
         }
         closed = true;
-        editor.close();
         HandlerList.unregisterAll(this);
         plugin.getServer().getServicesManager().unregister(Map.class, provider);
         commandRegistration.release();

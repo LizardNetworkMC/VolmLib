@@ -2,105 +2,65 @@ package art.arcane.volmlib.util.inventorygui;
 
 import art.arcane.volmlib.util.bukkit.BukkitInventoryViews;
 import art.arcane.volmlib.util.scheduling.FoliaScheduler;
-import org.bukkit.Server;
 import org.bukkit.entity.Player;
 import org.bukkit.inventory.Inventory;
 import org.bukkit.plugin.Plugin;
 
-import java.lang.reflect.InvocationTargetException;
-import java.lang.reflect.Method;
+import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
 import java.util.Objects;
-import java.util.concurrent.CountDownLatch;
-import java.util.concurrent.TimeUnit;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.logging.Level;
 
 public final class BukkitInventoryShutdown {
-    private static final long STOPPING_TIMEOUT_SECONDS = 5L;
-    private static final Method SERVER_IS_STOPPING = resolveServerIsStopping();
+    private final Plugin plugin;
+    private final List<CloseTask> tasks;
+    private final CompletableFuture<Void> completion;
+    private final AtomicBoolean started = new AtomicBoolean();
 
-    private BukkitInventoryShutdown() {
+    public BukkitInventoryShutdown(Plugin plugin, Collection<View> views) {
+        this.plugin = Objects.requireNonNull(plugin, "plugin");
+        this.tasks = new ArrayList<>(views.size());
+        List<CompletableFuture<Void>> completions = new ArrayList<>(views.size());
+        for (View view : List.copyOf(views)) {
+            CloseTask task = new CloseTask(view);
+            this.tasks.add(task);
+            completions.add(task.completion);
+        }
+        this.completion = CompletableFuture.allOf(completions.toArray(CompletableFuture[]::new));
     }
 
     public static void drain(Plugin plugin, Collection<View> views) {
-        Objects.requireNonNull(plugin, "plugin");
-        List<View> snapshot = List.copyOf(views);
-        DrainContext context = new DrainContext(plugin, new CountDownLatch(snapshot.size()));
-        for (View view : snapshot) {
-            CloseTask task = new CloseTask(context, view);
-            try {
-                if (FoliaScheduler.isOwnedByCurrentRegion(view.player())) {
-                    task.run();
-                } else if (!FoliaScheduler.runEntity(plugin, view.player(), task, 0L, task::retire)) {
-                    task.retire();
-                }
-            } catch (RuntimeException | LinkageError failure) {
-                plugin.getLogger().log(Level.SEVERE, "Could not schedule inventory cleanup during plugin shutdown.", failure);
-                task.retire();
+        new BukkitInventoryShutdown(plugin, views).closeOwned().whenComplete((ignored, failure) -> {
+            if (failure != null) {
+                plugin.getLogger().log(Level.SEVERE, "Could not close every inventory during plugin shutdown", failure);
+            }
+        });
+    }
+
+    public CompletableFuture<Void> closeAsync() {
+        if (this.started.compareAndSet(false, true)) {
+            for (CloseTask task : this.tasks) {
+                task.schedule();
             }
         }
-        awaitDrain(context);
+        return this.completion();
     }
 
-    private static void awaitDrain(DrainContext context) {
-        if (context.drained().getCount() == 0L) {
-            return;
+    public CompletableFuture<Void> closeOwned() {
+        this.started.set(true);
+        for (CloseTask task : this.tasks) {
+            task.closeOwned();
         }
-        if (serverStopping(context.plugin())) {
-            awaitStoppingDrain(context);
-            return;
-        }
-        InterruptedException interruption = null;
-        while (context.drained().getCount() > 0L) {
-            try {
-                context.drained().await();
-            } catch (InterruptedException failure) {
-                if (interruption == null) {
-                    interruption = failure;
-                }
-            }
-        }
-        if (interruption != null) {
-            Thread.currentThread().interrupt();
-            context.plugin().getLogger().log(Level.WARNING,
-                    "Inventory shutdown was interrupted while awaiting safe owner cleanup.", interruption);
-        }
+        return this.completion();
     }
 
-    private static void awaitStoppingDrain(DrainContext context) {
-        try {
-            if (!context.drained().await(STOPPING_TIMEOUT_SECONDS, TimeUnit.SECONDS)) {
-                context.plugin().getLogger().warning("Timed out while draining " + context.drained().getCount()
-                        + " inventory owner task(s) while the server was stopping.");
-            }
-        } catch (InterruptedException failure) {
-            Thread.currentThread().interrupt();
-            context.plugin().getLogger().log(Level.WARNING,
-                    "Inventory shutdown was interrupted while the server was stopping with "
-                            + context.drained().getCount() + " owner task(s) still pending.", failure);
-        }
-    }
-
-    private static boolean serverStopping(Plugin plugin) {
-        if (SERVER_IS_STOPPING == null) {
-            return false;
-        }
-        try {
-            return Boolean.TRUE.equals(SERVER_IS_STOPPING.invoke(plugin.getServer()));
-        } catch (IllegalAccessException | InvocationTargetException failure) {
-            plugin.getLogger().log(Level.WARNING, "Could not determine whether the server is stopping.", failure);
-            return false;
-        }
-    }
-
-    private static Method resolveServerIsStopping() {
-        try {
-            return Server.class.getMethod("isStopping");
-        } catch (NoSuchMethodException ignored) {
-            return null;
-        }
+    public CompletableFuture<Void> completion() {
+        return this.completion.copy();
     }
 
     public record View(Player player, Inventory inventory) {
@@ -110,35 +70,93 @@ public final class BukkitInventoryShutdown {
         }
     }
 
-    private record DrainContext(Plugin plugin, CountDownLatch drained) {
-    }
+    private final class CloseTask {
+        private static final int PENDING = 0;
+        private static final int RUNNING = 1;
+        private static final int FINISHED = 2;
 
-    private static final class CloseTask implements Runnable {
-        private final DrainContext context;
         private final View view;
-        private final AtomicBoolean completed = new AtomicBoolean();
+        private final AtomicInteger state = new AtomicInteger(PENDING);
+        private final CompletableFuture<Void> completion = new CompletableFuture<>();
 
-        private CloseTask(DrainContext context, View view) {
-            this.context = context;
+        private CloseTask(View view) {
             this.view = view;
         }
 
-        @Override
-        public void run() {
+        private void schedule() {
+            if (this.state.get() != PENDING) {
+                return;
+            }
             try {
-                if (BukkitInventoryViews.top(view.player().getOpenInventory()) == view.inventory()) {
-                    view.player().closeInventory();
+                if (FoliaScheduler.isOwnedByCurrentRegion(this.view.player())) {
+                    this.run();
+                } else {
+                    AtomicBoolean accepted = new AtomicBoolean();
+                    AtomicBoolean retired = new AtomicBoolean();
+                    boolean scheduled = FoliaScheduler.runEntity(plugin, this.view.player(), this::run, 0L, () -> {
+                        retired.set(true);
+                        if (accepted.get()) {
+                            this.retire();
+                        }
+                    });
+                    if (!scheduled) {
+                        this.reject("The inventory owner rejected cleanup");
+                    } else {
+                        accepted.set(true);
+                        if (retired.get()) {
+                            this.retire();
+                        }
+                    }
                 }
             } catch (RuntimeException | LinkageError failure) {
-                context.plugin().getLogger().log(Level.SEVERE, "Could not close an inventory during plugin shutdown.", failure);
+                this.fail(failure);
+            }
+        }
+
+        private void closeOwned() {
+            if (this.state.get() != PENDING) {
+                return;
+            }
+            try {
+                if (FoliaScheduler.isOwnedByCurrentRegion(this.view.player())) {
+                    this.run();
+                } else {
+                    this.reject("Plugin shutdown cannot close an inventory owned by another region");
+                }
+            } catch (RuntimeException | LinkageError failure) {
+                this.fail(failure);
+            }
+        }
+
+        private void run() {
+            if (!this.state.compareAndSet(PENDING, RUNNING)) {
+                return;
+            }
+            try {
+                if (BukkitInventoryViews.top(this.view.player().getOpenInventory()) == this.view.inventory()) {
+                    this.view.player().closeInventory();
+                }
+                this.completion.complete(null);
+            } catch (RuntimeException | LinkageError failure) {
+                this.completion.completeExceptionally(failure);
             } finally {
-                retire();
+                this.state.set(FINISHED);
             }
         }
 
         private void retire() {
-            if (completed.compareAndSet(false, true)) {
-                context.drained().countDown();
+            if (this.state.compareAndSet(PENDING, FINISHED)) {
+                this.completion.complete(null);
+            }
+        }
+
+        private void reject(String message) {
+            this.fail(new RejectedExecutionException(message));
+        }
+
+        private void fail(Throwable failure) {
+            if (this.state.compareAndSet(PENDING, FINISHED)) {
+                this.completion.completeExceptionally(failure);
             }
         }
     }

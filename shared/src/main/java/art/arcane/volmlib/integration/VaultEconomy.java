@@ -312,6 +312,19 @@ public final class VaultEconomy {
             }
         }
 
+        public boolean supportsPrecision(int scale) {
+            if (scale < 0 || scale > 18 || !current()) {
+                return false;
+            }
+            try {
+                int digits = economy.fractionalDigits();
+                return (digits == -1 || digits >= scale) && current();
+            } catch (RuntimeException exception) {
+                plugin.getLogger().log(Level.WARNING, "Could not check Vault currency precision for " + identity, exception);
+                return false;
+            }
+        }
+
         private TransferResult unknown(TransferRequest request, RuntimeException failure) {
             plugin.getLogger().log(Level.SEVERE, "Vault transfer outcome is unknown for " + normalizeContext(request.context())
                     + " via " + identity + " (" + request.direction() + " " + request.amount() + "); do not retry automatically", failure);

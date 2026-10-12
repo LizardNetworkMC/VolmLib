@@ -5,17 +5,26 @@ import art.arcane.volmlib.util.director.help.DirectorMiniMenu;
 import art.arcane.volmlib.util.inventorygui.BukkitInventoryShutdown;
 import art.arcane.volmlib.util.plugin.ComponentText;
 import art.arcane.volmlib.util.scheduling.FoliaScheduler;
+import org.bukkit.Bukkit;
 import org.bukkit.ChatColor;
 import org.bukkit.Material;
 import org.bukkit.Server;
 import org.bukkit.command.CommandSender;
 import org.bukkit.entity.Entity;
+import org.bukkit.entity.HumanEntity;
 import org.bukkit.entity.Player;
+import org.bukkit.event.HandlerList;
+import org.bukkit.event.inventory.InventoryClickEvent;
+import org.bukkit.event.inventory.InventoryCloseEvent;
+import org.bukkit.event.inventory.InventoryDragEvent;
 import org.bukkit.event.player.AsyncPlayerChatEvent;
+import org.bukkit.event.player.PlayerCommandPreprocessEvent;
+import org.bukkit.event.player.PlayerQuitEvent;
 import org.bukkit.event.server.PluginDisableEvent;
 import org.bukkit.inventory.Inventory;
 import org.bukkit.inventory.InventoryHolder;
 import org.bukkit.inventory.InventoryView;
+import org.bukkit.inventory.ItemFactory;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.plugin.Plugin;
 import org.junit.Test;
@@ -36,9 +45,14 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionException;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Consumer;
+import java.util.logging.Logger;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertNotSame;
 import static org.junit.Assert.assertSame;
@@ -49,6 +63,7 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.same;
 import static org.mockito.Mockito.doReturn;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.mockStatic;
 import static org.mockito.Mockito.never;
@@ -58,6 +73,189 @@ import static org.mockito.Mockito.withSettings;
 
 public class BukkitLanguageEditorTest {
     private static final String INVENTORY_VIEW_INTERNAL_NAME = "org/bukkit/inventory/InventoryView";
+
+    @Test(timeout = 2000L)
+    public void managedCloseWaitsForAnInventoryStillBeingOpened() throws Exception {
+        verifyCloseDuringOpening(false);
+    }
+
+    @Test(timeout = 2000L)
+    public void failedCloseDuringOpeningKeepsTheInventoryGuardedAndRetryable() throws Exception {
+        verifyCloseDuringOpening(true);
+    }
+
+    private void verifyCloseDuringOpening(boolean failClose) throws Exception {
+        Plugin plugin = mock(Plugin.class);
+        Server server = mock(Server.class);
+        Player player = mock(Player.class, withSettings().extraInterfaces(Entity.class, CommandSender.class));
+        Inventory inventory = mock(Inventory.class);
+        InventoryView view = mock(InventoryView.class);
+        ItemFactory itemFactory = mock(ItemFactory.class);
+        PluginLanguageService languages = mock(PluginLanguageService.class);
+        when(plugin.isEnabled()).thenReturn(true);
+        when(plugin.getName()).thenReturn("Example");
+        when(plugin.getLogger()).thenReturn(mock(Logger.class));
+        when(plugin.getServer()).thenReturn(server);
+        when(server.createInventory(any(InventoryHolder.class), eq(54), anyString())).thenReturn(inventory);
+        when(player.getUniqueId()).thenReturn(UUID.randomUUID());
+        when(((CommandSender) player).hasPermission("volmit.language.admin")).thenReturn(true);
+        when(player.getOpenInventory()).thenReturn(view);
+        when(view.getTopInventory()).thenReturn(inventory);
+        when(languages.availableLocales()).thenReturn(List.of());
+        BukkitLanguageEditor editor = editor(plugin, languages);
+        AtomicReference<CompletableFuture<Void>> completion = new AtomicReference<>();
+        when(player.openInventory(inventory)).thenAnswer(invocation -> {
+            completion.set(editor.closeAsync());
+            assertFalse("Cleanup must include the inventory still being opened", completion.get().isDone());
+            return view;
+        });
+        IllegalStateException closeFailure = new IllegalStateException("Inventory close failed");
+        if (failClose) {
+            doThrow(closeFailure).doNothing().when(player).closeInventory();
+        }
+        try (MockedStatic<Bukkit> bukkit = mockStatic(Bukkit.class);
+             MockedStatic<FoliaScheduler> scheduler = mockStatic(FoliaScheduler.class);
+             MockedStatic<HandlerList> handlers = mockStatic(HandlerList.class)) {
+            bukkit.when(Bukkit::getItemFactory).thenReturn(itemFactory);
+            scheduler.when(() -> FoliaScheduler.isOwnedByCurrentRegion((Entity) player)).thenReturn(true);
+            if (failClose) {
+                assertSame(closeFailure, assertThrows(IllegalStateException.class, () -> editor.open(player, null)));
+                assertSame(closeFailure, assertThrows(CompletionException.class, () -> completion.get().join()).getCause());
+                assertEquals(1, openInventories(editor).size());
+                handlers.verify(() -> HandlerList.unregisterAll(editor), never());
+                editor.closeAsync().join();
+                assertTrue(completion.get().isCompletedExceptionally());
+                assertTrue(openInventories(editor).isEmpty());
+            } else {
+                editor.open(player, null);
+                verify(player).closeInventory();
+                completion.get().join();
+            }
+        } finally {
+            editor.close();
+        }
+    }
+
+    @Test(timeout = 2000L)
+    public void enabledCloseKeepsAnAcceptedOwnerCleanupPending() throws Exception {
+        CleanupFixture fixture = new CleanupFixture();
+        AtomicReference<Runnable> cleanup = new AtomicReference<>();
+        try (MockedStatic<FoliaScheduler> scheduler = mockStatic(FoliaScheduler.class);
+             MockedStatic<HandlerList> handlers = mockStatic(HandlerList.class)) {
+            fixture.captureCleanup(scheduler, cleanup);
+            fixture.editor.close();
+            CompletableFuture<Void> completion = fixture.editor.closeAsync();
+            fixture.editor.close();
+            assertFalse(completion.isDone());
+            handlers.verify(() -> HandlerList.unregisterAll(fixture.editor), never());
+            verify(fixture.player, never()).getOpenInventory();
+            cleanup.get().run();
+            completion.join();
+            verify(fixture.player).closeInventory();
+            handlers.verify(() -> HandlerList.unregisterAll(fixture.editor));
+            assertTrue(fixture.inventories.isEmpty());
+        }
+    }
+
+    @Test(timeout = 2000L)
+    public void failedCleanupRetainsGuardsAndCanBeRetried() throws Exception {
+        CleanupFixture fixture = new CleanupFixture();
+        try (MockedStatic<FoliaScheduler> scheduler = mockStatic(FoliaScheduler.class);
+             MockedStatic<HandlerList> handlers = mockStatic(HandlerList.class)) {
+            CompletableFuture<Void> failed = fixture.editor.closeAsync();
+            assertThrows(CompletionException.class, failed::join);
+            assertEquals(1, fixture.inventories.size());
+            handlers.verify(() -> HandlerList.unregisterAll(fixture.editor), never());
+            fixture.verifyGuards();
+            AtomicReference<Runnable> cleanup = new AtomicReference<>();
+            fixture.captureCleanup(scheduler, cleanup);
+            CompletableFuture<Void> retry = fixture.editor.closeAsync();
+            assertFalse(retry.isDone());
+            assertTrue(failed.isCompletedExceptionally());
+            cleanup.get().run();
+            retry.join();
+            assertTrue(failed.isCompletedExceptionally());
+            assertTrue(fixture.inventories.isEmpty());
+            handlers.verify(() -> HandlerList.unregisterAll(fixture.editor));
+        }
+    }
+
+    @Test(timeout = 2000L)
+    public void failedCleanupReleasesGuardsOnlyAfterTheTrackedViewCloses() throws Exception {
+        CleanupFixture fixture = new CleanupFixture();
+        try (MockedStatic<FoliaScheduler> scheduler = mockStatic(FoliaScheduler.class);
+             MockedStatic<HandlerList> handlers = mockStatic(HandlerList.class)) {
+            assertThrows(CompletionException.class, () -> fixture.editor.closeAsync().join());
+            InventoryCloseEvent close = mock(InventoryCloseEvent.class);
+            when(close.getPlayer()).thenReturn((HumanEntity) fixture.player);
+            when(close.getInventory()).thenReturn(mock(Inventory.class));
+            fixture.editor.onClose(close);
+            handlers.verify(() -> HandlerList.unregisterAll(fixture.editor), never());
+            assertEquals(1, fixture.inventories.size());
+            when(close.getInventory()).thenReturn(fixture.inventory);
+            fixture.editor.onClose(close);
+            assertTrue(fixture.inventories.isEmpty());
+            handlers.verify(() -> HandlerList.unregisterAll(fixture.editor));
+        }
+    }
+
+    @Test(timeout = 2000L)
+    public void failedCleanupReleasesGuardsWhenTheLastViewerQuits() throws Exception {
+        CleanupFixture fixture = new CleanupFixture();
+        try (MockedStatic<FoliaScheduler> scheduler = mockStatic(FoliaScheduler.class);
+             MockedStatic<HandlerList> handlers = mockStatic(HandlerList.class)) {
+            assertThrows(CompletionException.class, () -> fixture.editor.closeAsync().join());
+            PlayerQuitEvent quit = mock(PlayerQuitEvent.class);
+            when(quit.getPlayer()).thenReturn(fixture.player);
+            fixture.editor.onQuit(quit);
+            assertTrue(fixture.inventories.isEmpty());
+            handlers.verify(() -> HandlerList.unregisterAll(fixture.editor));
+        }
+    }
+
+    @Test
+    public void commandRetiresQueuedChatWithoutClosingOrReplacingAnotherView() throws Exception {
+        Plugin plugin = mock(Plugin.class);
+        Player player = mock(Player.class, withSettings().extraInterfaces(Entity.class));
+        Entity entity = (Entity) player;
+        UUID owner = UUID.randomUUID();
+        when(player.getUniqueId()).thenReturn(owner);
+        BukkitLanguageEditor editor = editor(plugin, mock(PluginLanguageService.class));
+        Constructor<?> viewConstructor = nested("View").getDeclaredConstructors()[0];
+        viewConstructor.setAccessible(true);
+        Object view = viewConstructor.newInstance(null, null, null, "", 1, null, (Consumer<Player>) ignored -> { });
+        Constructor<?> promptConstructor = nested("Prompt").getDeclaredConstructors()[0];
+        promptConstructor.setAccessible(true);
+        Object prompt = promptConstructor.newInstance(view, null, null, null);
+        views(editor).put(owner, view);
+        prompts(editor).put(owner, prompt);
+        AsyncPlayerChatEvent chat = mock(AsyncPlayerChatEvent.class);
+        when(chat.getPlayer()).thenReturn(player);
+        when(chat.getMessage()).thenReturn("old filter");
+        PlayerCommandPreprocessEvent command = mock(PlayerCommandPreprocessEvent.class);
+        when(command.getPlayer()).thenReturn(player);
+        when(command.isCancelled()).thenReturn(true);
+        AtomicReference<Runnable> queued = new AtomicReference<>();
+        try (MockedStatic<FoliaScheduler> scheduler = mockStatic(FoliaScheduler.class)) {
+            scheduler.when(() -> FoliaScheduler.runEntity(same(plugin), same(entity), any(Runnable.class),
+                    eq(0L), any(Runnable.class))).thenAnswer(invocation -> {
+                        queued.set(invocation.getArgument(2));
+                        return true;
+                    });
+            editor.onChat(chat);
+            assertSame(prompt, prompts(editor).get(owner));
+            editor.onCommand(command);
+            assertTrue(prompts(editor).isEmpty());
+            assertTrue(views(editor).isEmpty());
+            Object replacement = viewConstructor.newInstance(null, null, null, "new filter", 1, null, (Consumer<Player>) ignored -> { });
+            views(editor).put(owner, replacement);
+            queued.get().run();
+            editor.onCommand(command);
+            assertSame(replacement, views(editor).get(owner));
+        }
+        verify(chat).setCancelled(true);
+        verify(player, never()).closeInventory();
+    }
 
     @Test
     public void inputDecodesNewlinesAndLiteralBackslashesWithoutChangingOtherEscapes() {
@@ -429,7 +627,7 @@ public class BukkitLanguageEditorTest {
     }
 
     @Test
-    public void pluginDisableDrainsEditorInventoryWithTheStillEnabledOwner() throws Exception {
+    public void pluginDisableClosesEditorInventoryOnCurrentOwner() throws Exception {
         PluginLanguageService languages = mock(PluginLanguageService.class);
         Plugin plugin = mock(Plugin.class);
         Server server = mock(Server.class);
@@ -450,14 +648,7 @@ public class BukkitLanguageEditorTest {
         openInventories(editor).put(UUID.randomUUID(), new BukkitInventoryShutdown.View(player, inventory));
 
         try (MockedStatic<FoliaScheduler> scheduler = mockStatic(FoliaScheduler.class)) {
-            scheduler.when(() -> FoliaScheduler.isOwnedByCurrentRegion(entity)).thenReturn(false);
-            scheduler.when(() -> FoliaScheduler.runEntity(
-                    same(plugin), same(entity), any(Runnable.class), eq(0L), any(Runnable.class)
-            )).thenAnswer(invocation -> {
-                assertTrue(plugin.isEnabled());
-                invocation.getArgument(2, Runnable.class).run();
-                return true;
-            });
+            scheduler.when(() -> FoliaScheduler.isOwnedByCurrentRegion(entity)).thenReturn(true);
 
             editor.onPluginDisable(disableEvent);
         }
@@ -492,6 +683,33 @@ public class BukkitLanguageEditorTest {
         verify(player, never()).closeInventory();
     }
 
+    @Test(timeout = 2000L)
+    public void disableTerminatesPendingManagedCloseWithoutAccessingAnotherOwner() throws Exception {
+        Plugin plugin = mock(Plugin.class);
+        when(plugin.getLogger()).thenReturn(mock(Logger.class));
+        Player player = mock(Player.class, withSettings().extraInterfaces(Entity.class));
+        Entity entity = (Entity) player;
+        BukkitLanguageEditor editor = editor(plugin, mock(PluginLanguageService.class));
+        openInventories(editor).put(UUID.randomUUID(), new BukkitInventoryShutdown.View(player, mock(Inventory.class)));
+        AtomicReference<Runnable> cleanup = new AtomicReference<>();
+        PluginDisableEvent disable = mock(PluginDisableEvent.class);
+        when(disable.getPlugin()).thenReturn(plugin);
+        try (MockedStatic<FoliaScheduler> scheduler = mockStatic(FoliaScheduler.class)) {
+            scheduler.when(() -> FoliaScheduler.runEntity(same(plugin), same(entity), any(Runnable.class),
+                    eq(0L), any(Runnable.class))).thenAnswer(invocation -> {
+                cleanup.set(invocation.getArgument(2, Runnable.class));
+                return true;
+            });
+            CompletableFuture<Void> completion = editor.closeAsync();
+            assertFalse(completion.isDone());
+            editor.onPluginDisable(disable);
+            assertTrue(completion.isCompletedExceptionally());
+            cleanup.get().run();
+            verify(player, never()).getOpenInventory();
+            verify(player, never()).closeInventory();
+        }
+    }
+
     private BukkitLanguageEditor editor(Plugin plugin, PluginLanguageService languages) {
         BukkitLanguageSwitcher.Options switcher = new BukkitLanguageSwitcher.Options(
                 "test",
@@ -505,6 +723,47 @@ public class BukkitLanguageEditorTest {
                 new BukkitLanguageEditor.Options(languages, switcher, ignored -> {
                 }, BukkitLanguageEditorPresentation.standard())
         );
+    }
+
+    private final class CleanupFixture {
+        private final Plugin plugin = mock(Plugin.class);
+        private final Player player = mock(Player.class, withSettings().extraInterfaces(Entity.class, HumanEntity.class));
+        private final Entity entity = (Entity) player;
+        private final Inventory inventory = mock(Inventory.class);
+        private final InventoryView view = mock(InventoryView.class);
+        private final BukkitLanguageEditor editor;
+        private final Map<UUID, BukkitInventoryShutdown.View> inventories;
+
+        private CleanupFixture() throws Exception {
+            when(plugin.isEnabled()).thenReturn(true);
+            when(plugin.getLogger()).thenReturn(mock(Logger.class));
+            when(player.getUniqueId()).thenReturn(UUID.randomUUID());
+            when(player.getOpenInventory()).thenReturn(view);
+            when(view.getTopInventory()).thenReturn(inventory);
+            editor = editor(plugin, mock(PluginLanguageService.class));
+            inventories = openInventories(editor);
+            inventories.put(player.getUniqueId(), new BukkitInventoryShutdown.View(player, inventory));
+        }
+
+        private void captureCleanup(MockedStatic<FoliaScheduler> scheduler, AtomicReference<Runnable> cleanup) {
+            scheduler.when(() -> FoliaScheduler.runEntity(same(plugin), same(entity), any(Runnable.class),
+                    eq(0L), any(Runnable.class))).thenAnswer(invocation -> {
+                cleanup.set(invocation.getArgument(2));
+                return true;
+            });
+        }
+
+        private void verifyGuards() throws Exception {
+            when(inventory.getHolder()).thenReturn(holder(editor));
+            InventoryClickEvent click = mock(InventoryClickEvent.class);
+            when(click.getView()).thenReturn(view);
+            editor.onClick(click);
+            verify(click).setCancelled(true);
+            InventoryDragEvent drag = mock(InventoryDragEvent.class);
+            when(drag.getView()).thenReturn(view);
+            editor.onDrag(drag);
+            verify(drag).setCancelled(true);
+        }
     }
 
     private InventoryHolder holder(BukkitLanguageEditor editor) throws Exception {

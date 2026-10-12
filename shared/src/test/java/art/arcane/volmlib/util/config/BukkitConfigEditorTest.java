@@ -2,6 +2,7 @@ package art.arcane.volmlib.util.config;
 
 import art.arcane.volmlib.util.director.DirectorTextResolver;
 import art.arcane.volmlib.util.director.help.DirectorMiniMenu;
+import art.arcane.volmlib.util.inventorygui.BukkitInventoryShutdown;
 import art.arcane.volmlib.util.localization.MessageArgs;
 import art.arcane.volmlib.util.localization.MessageCatalog;
 import art.arcane.volmlib.util.localization.MessageKey;
@@ -15,8 +16,17 @@ import org.bukkit.Server;
 import org.bukkit.Material;
 import org.bukkit.command.CommandSender;
 import org.bukkit.entity.Entity;
+import org.bukkit.entity.HumanEntity;
 import org.bukkit.entity.Player;
+import org.bukkit.event.HandlerList;
 import org.bukkit.event.inventory.ClickType;
+import org.bukkit.event.inventory.InventoryClickEvent;
+import org.bukkit.event.inventory.InventoryCloseEvent;
+import org.bukkit.event.inventory.InventoryDragEvent;
+import org.bukkit.event.player.AsyncPlayerChatEvent;
+import org.bukkit.event.player.PlayerCommandPreprocessEvent;
+import org.bukkit.event.player.PlayerQuitEvent;
+import org.bukkit.event.server.PluginDisableEvent;
 import org.bukkit.inventory.Inventory;
 import org.bukkit.inventory.InventoryHolder;
 import org.bukkit.inventory.InventoryView;
@@ -27,31 +37,220 @@ import org.junit.Test;
 import org.mockito.MockedStatic;
 
 import java.io.IOException;
+import java.lang.reflect.Constructor;
+import java.lang.reflect.Field;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.HashSet;
 import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionException;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ThreadFactory;
+import java.util.function.Consumer;
 import java.util.logging.Logger;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertSame;
 import static org.junit.Assert.assertThrows;
 import static org.junit.Assert.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.same;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.mockStatic;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.mockito.Mockito.withSettings;
 import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.doThrow;
 
 public class BukkitConfigEditorTest {
+    @Test(timeout = 2000L)
+    public void enabledCloseKeepsAnAcceptedOwnerCleanupPending() throws Exception {
+        CleanupFixture fixture = new CleanupFixture();
+        AtomicReference<Runnable> cleanup = new AtomicReference<>();
+        try (MockedStatic<FoliaScheduler> scheduler = mockStatic(FoliaScheduler.class);
+             MockedStatic<HandlerList> handlers = mockStatic(HandlerList.class)) {
+            fixture.captureCleanup(scheduler, cleanup);
+            fixture.editor.close();
+            CompletableFuture<Void> completion = fixture.editor.closeAsync();
+            fixture.editor.close();
+            assertFalse(completion.isDone());
+            handlers.verify(() -> HandlerList.unregisterAll(fixture.editor), never());
+            verify(fixture.player, never()).getOpenInventory();
+            cleanup.get().run();
+            completion.join();
+            verify(fixture.player).closeInventory();
+            handlers.verify(() -> HandlerList.unregisterAll(fixture.editor));
+            assertTrue(fixture.inventories.isEmpty());
+        }
+    }
+
+    @Test(timeout = 2000L)
+    public void failedCleanupRetainsGuardsAndCanBeRetried() throws Exception {
+        CleanupFixture fixture = new CleanupFixture();
+        try (MockedStatic<FoliaScheduler> scheduler = mockStatic(FoliaScheduler.class);
+             MockedStatic<HandlerList> handlers = mockStatic(HandlerList.class)) {
+            CompletableFuture<Void> failed = fixture.editor.closeAsync();
+            assertThrows(CompletionException.class, failed::join);
+            assertEquals(1, fixture.inventories.size());
+            handlers.verify(() -> HandlerList.unregisterAll(fixture.editor), never());
+            fixture.verifyGuards();
+            AtomicReference<Runnable> cleanup = new AtomicReference<>();
+            fixture.captureCleanup(scheduler, cleanup);
+            CompletableFuture<Void> retry = fixture.editor.closeAsync();
+            assertFalse(retry.isDone());
+            assertTrue(failed.isCompletedExceptionally());
+            cleanup.get().run();
+            retry.join();
+            assertTrue(failed.isCompletedExceptionally());
+            assertTrue(fixture.inventories.isEmpty());
+            handlers.verify(() -> HandlerList.unregisterAll(fixture.editor));
+        }
+    }
+
+    @Test(timeout = 2000L)
+    public void failedCleanupReleasesGuardsOnlyAfterTheTrackedViewCloses() throws Exception {
+        CleanupFixture fixture = new CleanupFixture();
+        try (MockedStatic<FoliaScheduler> scheduler = mockStatic(FoliaScheduler.class);
+             MockedStatic<HandlerList> handlers = mockStatic(HandlerList.class)) {
+            assertThrows(CompletionException.class, () -> fixture.editor.closeAsync().join());
+            InventoryCloseEvent close = mock(InventoryCloseEvent.class);
+            when(close.getPlayer()).thenReturn((HumanEntity) fixture.player);
+            when(close.getInventory()).thenReturn(mock(Inventory.class));
+            fixture.editor.onClose(close);
+            handlers.verify(() -> HandlerList.unregisterAll(fixture.editor), never());
+            assertEquals(1, fixture.inventories.size());
+            when(close.getInventory()).thenReturn(fixture.inventory);
+            fixture.editor.onClose(close);
+            assertTrue(fixture.inventories.isEmpty());
+            handlers.verify(() -> HandlerList.unregisterAll(fixture.editor));
+        }
+    }
+
+    @Test(timeout = 2000L)
+    public void failedCleanupReleasesGuardsWhenTheLastViewerQuits() throws Exception {
+        CleanupFixture fixture = new CleanupFixture();
+        try (MockedStatic<FoliaScheduler> scheduler = mockStatic(FoliaScheduler.class);
+             MockedStatic<HandlerList> handlers = mockStatic(HandlerList.class)) {
+            assertThrows(CompletionException.class, () -> fixture.editor.closeAsync().join());
+            PlayerQuitEvent quit = mock(PlayerQuitEvent.class);
+            when(quit.getPlayer()).thenReturn(fixture.player);
+            fixture.editor.onQuit(quit);
+            assertTrue(fixture.inventories.isEmpty());
+            handlers.verify(() -> HandlerList.unregisterAll(fixture.editor));
+        }
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    public void commandRetiresQueuedChatButKeepsAPlainReplacementMenu() throws Exception {
+        Plugin plugin = mock(Plugin.class);
+        Server server = mock(Server.class);
+        when(plugin.getName()).thenReturn("Example");
+        when(plugin.getLogger()).thenReturn(mock(Logger.class));
+        when(plugin.getServer()).thenReturn(server);
+        when(server.getPluginManager()).thenReturn(mock(PluginManager.class));
+        Player player = mock(Player.class, withSettings().extraInterfaces(Entity.class));
+        Entity entity = (Entity) player;
+        UUID owner = UUID.randomUUID();
+        when(player.getUniqueId()).thenReturn(owner);
+        ConfigEditorDocument document = ConfigEditorDocument.fromToml("name = 'original'");
+        try (BukkitConfigEditor editor = BukkitConfigEditor.register(plugin, new BukkitConfigEditor.Options(
+                () -> document, edit -> edit.original(), new BukkitConfigEditor.Presentation(
+                "example.config", DirectorMiniMenu.Theme.irisGreen(), DirectorTextResolver.ENGLISH)))) {
+            Class<?> sessionType = Class.forName(BukkitConfigEditor.class.getName() + "$Session");
+            Constructor<?> sessionConstructor = sessionType.getDeclaredConstructor(Player.class, Consumer.class);
+            sessionConstructor.setAccessible(true);
+            Object session = sessionConstructor.newInstance(player, null);
+            Class<?> promptType = Class.forName(BukkitConfigEditor.class.getName() + "$Prompt");
+            Constructor<?> promptConstructor = promptType.getDeclaredConstructor(sessionType, ConfigEditorDocument.Entry.class);
+            promptConstructor.setAccessible(true);
+            Object prompt = promptConstructor.newInstance(session, document.entries(List.of()).get(0));
+            Field sessionField = BukkitConfigEditor.class.getDeclaredField("sessions");
+            sessionField.setAccessible(true);
+            Map<UUID, Object> sessions = (Map<UUID, Object>) sessionField.get(editor);
+            Field promptField = BukkitConfigEditor.class.getDeclaredField("prompts");
+            promptField.setAccessible(true);
+            Map<UUID, Object> prompts = (Map<UUID, Object>) promptField.get(editor);
+            sessions.put(owner, session);
+            prompts.put(owner, prompt);
+            AsyncPlayerChatEvent chat = mock(AsyncPlayerChatEvent.class);
+            when(chat.getPlayer()).thenReturn(player);
+            when(chat.getMessage()).thenReturn("old value");
+            PlayerCommandPreprocessEvent command = mock(PlayerCommandPreprocessEvent.class);
+            when(command.getPlayer()).thenReturn(player);
+            when(command.isCancelled()).thenReturn(true);
+            AtomicReference<Runnable> queued = new AtomicReference<>();
+            try (MockedStatic<FoliaScheduler> scheduler = mockStatic(FoliaScheduler.class)) {
+                scheduler.when(() -> FoliaScheduler.runEntity(same(plugin), same(entity), any(Runnable.class),
+                        eq(0L), any(Runnable.class))).thenAnswer(invocation -> {
+                            queued.set(invocation.getArgument(2));
+                            return true;
+                        });
+                editor.onChat(chat);
+                assertSame(prompt, prompts.get(owner));
+                editor.onCommand(command);
+                assertTrue(prompts.isEmpty());
+                assertTrue(sessions.isEmpty());
+                Object replacement = sessionConstructor.newInstance(player, null);
+                sessions.put(owner, replacement);
+                queued.get().run();
+                editor.onCommand(command);
+                assertSame(replacement, sessions.get(owner));
+            }
+            verify(chat).setCancelled(true);
+            verify(player, never()).closeInventory();
+        }
+    }
+
+    @Test(timeout = 2000L)
+    @SuppressWarnings("unchecked")
+    public void disableTerminatesPendingManagedCloseWithoutAccessingAnotherOwner() throws Exception {
+        Plugin plugin = mock(Plugin.class);
+        Server server = mock(Server.class);
+        when(plugin.getName()).thenReturn("Example");
+        when(plugin.getLogger()).thenReturn(mock(Logger.class));
+        when(plugin.getServer()).thenReturn(server);
+        when(server.getPluginManager()).thenReturn(mock(PluginManager.class));
+        Player player = mock(Player.class, withSettings().extraInterfaces(Entity.class));
+        Entity entity = (Entity) player;
+        BukkitConfigEditor editor = BukkitConfigEditor.register(plugin, new BukkitConfigEditor.Options(
+                () -> ConfigEditorDocument.fromToml("enabled = true"), edit -> edit.original(),
+                new BukkitConfigEditor.Presentation("example.config", DirectorMiniMenu.Theme.irisGreen(),
+                        DirectorTextResolver.ENGLISH)));
+        Field inventories = BukkitConfigEditor.class.getDeclaredField("openInventories");
+        inventories.setAccessible(true);
+        ((Map<UUID, BukkitInventoryShutdown.View>) inventories.get(editor)).put(UUID.randomUUID(),
+                new BukkitInventoryShutdown.View(player, mock(Inventory.class)));
+        AtomicReference<Runnable> cleanup = new AtomicReference<>();
+        PluginDisableEvent disable = mock(PluginDisableEvent.class);
+        when(disable.getPlugin()).thenReturn(plugin);
+        try (MockedStatic<FoliaScheduler> scheduler = mockStatic(FoliaScheduler.class)) {
+            scheduler.when(() -> FoliaScheduler.runEntity(same(plugin), same(entity), any(Runnable.class),
+                    eq(0L), any(Runnable.class))).thenAnswer(invocation -> {
+                cleanup.set(invocation.getArgument(2, Runnable.class));
+                return true;
+            });
+            CompletableFuture<Void> completion = editor.closeAsync();
+            assertFalse(completion.isDone());
+            editor.onPluginDisable(disable);
+            assertTrue(completion.isCompletedExceptionally());
+            cleanup.get().run();
+            verify(player, never()).getOpenInventory();
+            verify(player, never()).closeInventory();
+        } finally {
+            editor.close();
+        }
+    }
+
     @Test
     public void customFeedbackWaitsForPersistedValuesAndDoesNotConfirmFailedWrites() throws Exception {
         verifySaveFeedback(true);
@@ -169,7 +368,17 @@ public class BukkitConfigEditorTest {
     }
 
     @Test
-    public void closesAnInventoryOpenedWhileTheEditorIsShuttingDown() {
+    public void closesAnInventoryOpenedWhileTheEditorIsShuttingDown() throws Exception {
+        verifyCloseDuringOpening(false);
+    }
+
+    @Test
+    public void failedCloseDuringOpeningKeepsTheInventoryGuardedAndRetryable() throws Exception {
+        verifyCloseDuringOpening(true);
+    }
+
+    @SuppressWarnings("unchecked")
+    private void verifyCloseDuringOpening(boolean failClose) throws Exception {
         Plugin plugin = mock(Plugin.class);
         Server server = mock(Server.class);
         Player player = mock(Player.class, withSettings().extraInterfaces(Entity.class, CommandSender.class));
@@ -178,6 +387,7 @@ public class BukkitConfigEditorTest {
         InventoryView view = mock(InventoryView.class);
         ItemFactory itemFactory = mock(ItemFactory.class);
         AtomicReference<BukkitConfigEditor> editor = new AtomicReference<>();
+        AtomicReference<CompletableFuture<Void>> completion = new AtomicReference<>();
         when(plugin.getName()).thenReturn("Example");
         when(plugin.getServer()).thenReturn(server);
         when(plugin.isEnabled()).thenReturn(true);
@@ -189,11 +399,17 @@ public class BukkitConfigEditorTest {
         when(player.getOpenInventory()).thenReturn(view);
         when(view.getTopInventory()).thenReturn(inventory);
         when(player.openInventory(inventory)).thenAnswer(invocation -> {
-            editor.get().close();
+            completion.set(editor.get().closeAsync());
+            assertFalse("Cleanup must include the inventory still being opened", completion.get().isDone());
             return view;
         });
+        IllegalStateException closeFailure = new IllegalStateException("Inventory close failed");
+        if (failClose) {
+            doThrow(closeFailure).doNothing().when(player).closeInventory();
+        }
         try (MockedStatic<Bukkit> bukkit = mockStatic(Bukkit.class);
-             MockedStatic<FoliaScheduler> scheduler = mockStatic(FoliaScheduler.class)) {
+             MockedStatic<FoliaScheduler> scheduler = mockStatic(FoliaScheduler.class);
+             MockedStatic<HandlerList> handlers = mockStatic(HandlerList.class)) {
             bukkit.when(Bukkit::getItemFactory).thenReturn(itemFactory);
             scheduler.when(() -> FoliaScheduler.runEntity(eq(plugin), eq(entity), any(Runnable.class)))
                     .thenAnswer(invocation -> {
@@ -207,13 +423,87 @@ public class BukkitConfigEditorTest {
                     new BukkitConfigEditor.Presentation("example.config", DirectorMiniMenu.Theme.irisGreen(),
                             DirectorTextResolver.ENGLISH))));
 
-            editor.get().open((CommandSender) player);
-
-            verify(player).closeInventory();
+            if (failClose) {
+                assertSame(closeFailure, assertThrows(IllegalStateException.class,
+                        () -> editor.get().open((CommandSender) player)));
+                assertSame(closeFailure, assertThrows(CompletionException.class, () -> completion.get().join()).getCause());
+                Field inventories = BukkitConfigEditor.class.getDeclaredField("openInventories");
+                inventories.setAccessible(true);
+                assertEquals(1, ((Map<UUID, BukkitInventoryShutdown.View>) inventories.get(editor.get())).size());
+                handlers.verify(() -> HandlerList.unregisterAll(editor.get()), never());
+                scheduler.when(() -> FoliaScheduler.isOwnedByCurrentRegion(entity)).thenReturn(true);
+                editor.get().closeAsync().join();
+                assertTrue(completion.get().isCompletedExceptionally());
+                assertTrue(((Map<UUID, BukkitInventoryShutdown.View>) inventories.get(editor.get())).isEmpty());
+            } else {
+                editor.get().open((CommandSender) player);
+                verify(player).closeInventory();
+                completion.get().join();
+            }
         } finally {
             if (editor.get() != null) {
                 editor.get().close();
             }
+        }
+    }
+
+    private static final class CleanupFixture {
+        private final Plugin plugin = mock(Plugin.class);
+        private final Player player = mock(Player.class, withSettings().extraInterfaces(Entity.class, HumanEntity.class));
+        private final Entity entity = (Entity) player;
+        private final Inventory inventory = mock(Inventory.class);
+        private final InventoryView view = mock(InventoryView.class);
+        private final BukkitConfigEditor editor;
+        private final Map<UUID, BukkitInventoryShutdown.View> inventories;
+
+        @SuppressWarnings("unchecked")
+        private CleanupFixture() throws Exception {
+            Server server = mock(Server.class);
+            when(plugin.getName()).thenReturn("Example");
+            when(plugin.isEnabled()).thenReturn(true);
+            when(plugin.getLogger()).thenReturn(mock(Logger.class));
+            when(plugin.getServer()).thenReturn(server);
+            when(server.getPluginManager()).thenReturn(mock(PluginManager.class));
+            when(player.getUniqueId()).thenReturn(UUID.randomUUID());
+            when(player.getOpenInventory()).thenReturn(view);
+            when(view.getTopInventory()).thenReturn(inventory);
+            editor = BukkitConfigEditor.register(plugin, new BukkitConfigEditor.Options(
+                    () -> ConfigEditorDocument.fromToml("enabled = true"), edit -> edit.original(),
+                    new BukkitConfigEditor.Presentation("example.config", DirectorMiniMenu.Theme.irisGreen(),
+                            DirectorTextResolver.ENGLISH)));
+            Field field = BukkitConfigEditor.class.getDeclaredField("openInventories");
+            field.setAccessible(true);
+            inventories = (Map<UUID, BukkitInventoryShutdown.View>) field.get(editor);
+            inventories.put(player.getUniqueId(), new BukkitInventoryShutdown.View(player, inventory));
+        }
+
+        private void captureCleanup(MockedStatic<FoliaScheduler> scheduler, AtomicReference<Runnable> cleanup) {
+            scheduler.when(() -> FoliaScheduler.runEntity(same(plugin), same(entity), any(Runnable.class),
+                    eq(0L), any(Runnable.class))).thenAnswer(invocation -> {
+                cleanup.set(invocation.getArgument(2));
+                return true;
+            });
+        }
+
+        private void verifyGuards() throws Exception {
+            Class<?> sessionType = Class.forName(BukkitConfigEditor.class.getName() + "$Session");
+            Class<?> viewType = Class.forName(BukkitConfigEditor.class.getName() + "$View");
+            Class<?> holderType = Class.forName(BukkitConfigEditor.class.getName() + "$Holder");
+            Constructor<?> sessionConstructor = sessionType.getDeclaredConstructor(Player.class, Consumer.class);
+            sessionConstructor.setAccessible(true);
+            Constructor<?> holderConstructor = holderType.getDeclaredConstructor(BukkitConfigEditor.class, sessionType, viewType);
+            holderConstructor.setAccessible(true);
+            InventoryHolder holder = (InventoryHolder) holderConstructor.newInstance(editor,
+                    sessionConstructor.newInstance(player, null), null);
+            when(inventory.getHolder()).thenReturn(holder);
+            InventoryClickEvent click = mock(InventoryClickEvent.class);
+            when(click.getView()).thenReturn(view);
+            editor.onClick(click);
+            verify(click).setCancelled(true);
+            InventoryDragEvent drag = mock(InventoryDragEvent.class);
+            when(drag.getView()).thenReturn(view);
+            editor.onDrag(drag);
+            verify(drag).setCancelled(true);
         }
     }
 
