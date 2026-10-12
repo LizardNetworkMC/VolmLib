@@ -166,7 +166,7 @@
     },
     {
       "name": "ShapedPortals",
-      "filename": "ShapedPortals-*.jar",
+      "filename": "ShapedPortals v* [[]CraftBukkit] *.jar",
       "max_bytes": 990000,
       "forbidden_prefixes": [
         "org/bukkit/",
