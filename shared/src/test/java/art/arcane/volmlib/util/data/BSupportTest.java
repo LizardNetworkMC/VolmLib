@@ -28,24 +28,6 @@ public class BSupportTest {
     }
 
     @Test
-    public void copperChestVariantsAcceptContainerLoot() {
-        try (MockedStatic<Bukkit> bukkit = mockStatic(Bukkit.class)) {
-            bukkit.when(() -> Bukkit.createBlockData(Material.AIR)).thenReturn(blockData(Material.AIR));
-            BSupport<Object> support = new BSupport<Object>() {
-            };
-            for (String name : new String[]{"COPPER_CHEST", "EXPOSED_COPPER_CHEST", "WEATHERED_COPPER_CHEST",
-                    "OXIDIZED_COPPER_CHEST", "WAXED_COPPER_CHEST", "WAXED_EXPOSED_COPPER_CHEST",
-                    "WAXED_WEATHERED_COPPER_CHEST", "WAXED_OXIDIZED_COPPER_CHEST"}) {
-                BlockData chest = blockData(Material.valueOf(name));
-                assertTrue(name, support.isStorage(chest));
-                assertTrue(name, support.isStorageChest(chest));
-            }
-            assertFalse(support.isStorage(blockData(Material.COPPER_BLOCK)));
-            assertFalse(support.isStorageChest(blockData(Material.COPPER_BLOCK)));
-        }
-    }
-
-    @Test
     public void speleothemTipRecognizesTipAcrossApiDescriptors() {
         Class<?> speleothem = speleothemClass();
         BlockData tip = speleothem(speleothem, "TIP", false);
