@@ -5,7 +5,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.function.BooleanSupplier;
 
 public final class ServerShutdownBoundary {
-    private static final long MAX_JOIN_SLICE_MILLIS = 1000L;
+    private static final long MAX_WAIT_SLICE_NANOS = TimeUnit.SECONDS.toNanos(1L);
 
     private final BooleanSupplier boundaryReached;
     private final Thread serverThread;
@@ -30,17 +30,18 @@ public final class ServerShutdownBoundary {
         boolean interrupted = false;
         while (!boundaryReached.getAsBoolean()) {
             long remaining = timeoutNanos - (System.nanoTime() - started);
-            if (remaining <= 0L || !serverThread.isAlive()) {
+            if (remaining <= 0L) {
                 restoreInterrupt(interrupted);
                 return boundaryReached.getAsBoolean();
             }
 
-            long joinMillis = Math.max(
-                    1L,
-                    Math.min(MAX_JOIN_SLICE_MILLIS, TimeUnit.NANOSECONDS.toMillis(remaining))
-            );
+            long waitNanos = Math.min(MAX_WAIT_SLICE_NANOS, remaining);
             try {
-                serverThread.join(joinMillis);
+                if (serverThread.isAlive()) {
+                    TimeUnit.NANOSECONDS.timedJoin(serverThread, waitNanos);
+                } else {
+                    TimeUnit.NANOSECONDS.sleep(waitNanos);
+                }
             } catch (InterruptedException e) {
                 interrupted = true;
             }
