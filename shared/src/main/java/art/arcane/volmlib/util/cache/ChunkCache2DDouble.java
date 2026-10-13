@@ -29,6 +29,26 @@ public class ChunkCache2DDouble {
         return compute(key, x, z, resolver);
     }
 
+    boolean copyIfReady(int x, int z, double[] target, int index) {
+        int key = ((z & 15) << 4) | (x & 15);
+        if (((byte) STATE_HANDLE.getAcquire(states, key)) != STATE_READY) {
+            return false;
+        }
+        target[index] = (double) VALUE_HANDLE.getVolatile(values, key);
+        return true;
+    }
+
+    double publish(int x, int z, double value) {
+        int key = ((z & 15) << 4) | (x & 15);
+        if (STATE_HANDLE.compareAndSet(states, key, STATE_EMPTY, STATE_COMPUTING)) {
+            VALUE_HANDLE.setRelease(values, key, value);
+            STATE_HANDLE.setRelease(states, key, STATE_READY);
+            return value;
+        }
+        return ((byte) STATE_HANDLE.getAcquire(states, key)) == STATE_READY
+                ? (double) VALUE_HANDLE.getVolatile(values, key) : value;
+    }
+
     public void fill(int worldX, int worldZ, Object[] target, IntIntToDoubleFunction resolver) {
         for (int row = 0; row < 16; row++) {
             int rowOffset = row << 4;
