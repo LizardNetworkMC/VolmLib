@@ -103,6 +103,7 @@ import java.util.Arrays;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -191,17 +192,26 @@ public final class NativeBukkitStructureStage<C, D, P extends StructureStartPlan
                             policy.structurePolicy(current), level, structureId, holder.value(), start)))));
         }
         searches.sort(Comparator.comparing(NativeLocateSearch::structureId));
-        for (int attempt = 0; attempt < StructureLocateSearchAccess.MAX_SELECTED_CANDIDATE_RETRIES; attempt++) {
+        List<NativeLocateSearch<O>> retries = new ArrayList<>();
+        Pair<BlockPos, Holder<Structure>> irisLocated = null;
+        NativeLocateSearch<O> selectedSearch = null;
+        StructureLocateSearchAccess.Verified<StructureStart, O> selectedStart = null;
+        long selectedDistance = Long.MAX_VALUE;
+        int attempts = 0;
+        while (attempts < StructureLocateSearchAccess.MAX_SELECTED_CANDIDATE_RETRIES) {
+            if (searches.isEmpty()) {
+                searches.addAll(retries);
+                retries.clear();
+            }
             NativeLocateSearch<O> bestSearch = null;
             StructureLocateCandidate bestResult = null;
             long bestDistance = Long.MAX_VALUE;
-            for (NativeLocateSearch<O> search : searches) {
+            Iterator<NativeLocateSearch<O>> iterator = searches.iterator();
+            while (iterator.hasNext()) {
+                NativeLocateSearch<O> search = iterator.next();
                 StructureLocateCandidate result = search.search().predict();
-                if (result.limitReached()) {
-                    throw new IllegalStateException("Native structure locate reached its safety limit for "
-                            + search.structureId() + " within " + radius + " placement rings");
-                }
                 if (!result.found()) {
+                    iterator.remove();
                     continue;
                 }
                 long dx = (long) result.originX() - pos.getX();
@@ -214,34 +224,38 @@ public final class NativeBukkitStructureStage<C, D, P extends StructureStartPlan
                 }
             }
             if (bestSearch == null) {
-                return NativeStructureLocateResults.selectAndReference(
-                        pos, null, () -> { }, nativeLocated, nativeReference);
+                if (retries.isEmpty()) {
+                    break;
+                }
+                continue;
             }
-            Pair<BlockPos, Holder<Structure>> predicted = Pair.of(
-                    new BlockPos(bestResult.originX(), bestResult.baseY(), bestResult.originZ()),
-                    bestSearch.holder());
-            if (NativeStructureLocateResults.nearest(pos, predicted, nativeLocated) != predicted) {
-                return NativeStructureLocateResults.selectAndReference(
-                        pos, predicted, () -> { }, nativeLocated, nativeReference);
-            }
+            searches.remove(bestSearch);
+            attempts++;
             StructureLocateSearchAccess.Verified<StructureStart, O> verified =
                     bestSearch.search().verify(bestResult);
             if (verified == null) {
                 bestSearch.search().reject(bestResult);
+                retries.add(bestSearch);
                 continue;
             }
+            BlockPos pieceLocator = verified.start().getPieces().getFirst().getLocatorPosition();
             BlockPos located = new BlockPos(
-                    bestResult.originX(), policy.locatorY(verified.ownership()),
-                    bestResult.originZ());
-            Pair<BlockPos, Holder<Structure>> irisLocated = Pair.of(located, bestSearch.holder());
-            NativeLocateSearch<O> selectedSearch = bestSearch;
-            StructureLocateSearchAccess.Verified<StructureStart, O> selectedStart = verified;
-            return NativeStructureLocateResults.selectAndReference(
-                    pos, irisLocated, () -> selectedSearch.search().reference(selectedStart),
-                    nativeLocated, nativeReference);
+                    pieceLocator.getX(), policy.locatorY(verified.ownership()), pieceLocator.getZ());
+            long dx = (long) located.getX() - pos.getX();
+            long dz = (long) located.getZ() - pos.getZ();
+            long distance = dx * dx + dz * dz;
+            if (distance < selectedDistance) {
+                irisLocated = Pair.of(located, bestSearch.holder());
+                selectedSearch = bestSearch;
+                selectedStart = verified;
+                selectedDistance = distance;
+            }
         }
-        throw new IllegalStateException("Native structure locate rejected too many selected candidates within "
-                + radius + " placement rings");
+        NativeLocateSearch<O> referenceSearch = selectedSearch;
+        StructureLocateSearchAccess.Verified<StructureStart, O> referenceStart = selectedStart;
+        return NativeStructureLocateResults.selectAndReference(
+                pos, irisLocated, () -> referenceSearch.search().reference(referenceStart),
+                nativeLocated, nativeReference);
     }
 
     public HolderSet<Structure> filterReachableStructures(ServerLevel level, HolderSet<Structure> holders) {
