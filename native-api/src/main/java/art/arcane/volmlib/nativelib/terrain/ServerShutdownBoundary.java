@@ -28,32 +28,29 @@ public final class ServerShutdownBoundary {
         long timeoutNanos = Math.max(0L, activeUnit.toNanos(timeout));
         long started = System.nanoTime();
         boolean interrupted = false;
-        while (!boundaryReached.getAsBoolean()) {
-            long remaining = timeoutNanos - (System.nanoTime() - started);
-            if (remaining <= 0L) {
-                restoreInterrupt(interrupted);
-                return boundaryReached.getAsBoolean();
-            }
-
-            long waitNanos = Math.min(MAX_WAIT_SLICE_NANOS, remaining);
-            try {
-                if (serverThread.isAlive()) {
-                    TimeUnit.NANOSECONDS.timedJoin(serverThread, waitNanos);
-                } else {
-                    TimeUnit.NANOSECONDS.sleep(waitNanos);
+        try {
+            while (!boundaryReached.getAsBoolean()) {
+                long remaining = timeoutNanos - (System.nanoTime() - started);
+                if (remaining <= 0L) {
+                    return boundaryReached.getAsBoolean();
                 }
-            } catch (InterruptedException e) {
-                interrupted = true;
+
+                long waitNanos = Math.min(MAX_WAIT_SLICE_NANOS, remaining);
+                try {
+                    if (serverThread.isAlive()) {
+                        TimeUnit.NANOSECONDS.timedJoin(serverThread, waitNanos);
+                    } else {
+                        TimeUnit.NANOSECONDS.sleep(waitNanos);
+                    }
+                } catch (InterruptedException e) {
+                    interrupted = true;
+                }
             }
-        }
-
-        restoreInterrupt(interrupted);
-        return true;
-    }
-
-    private static void restoreInterrupt(boolean interrupted) {
-        if (interrupted) {
-            Thread.currentThread().interrupt();
+            return true;
+        } finally {
+            if (interrupted) {
+                Thread.currentThread().interrupt();
+            }
         }
     }
 }

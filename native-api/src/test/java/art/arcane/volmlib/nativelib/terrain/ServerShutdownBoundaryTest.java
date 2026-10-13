@@ -13,6 +13,8 @@ import java.util.function.BooleanSupplier;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertSame;
+import static org.junit.Assert.assertThrows;
 import static org.junit.Assert.assertTrue;
 
 public class ServerShutdownBoundaryTest {
@@ -75,6 +77,26 @@ public class ServerShutdownBoundaryTest {
             Thread.currentThread().interrupt();
             assertFalse(new ServerShutdownBoundary(() -> false, new Thread())
                     .await(20L, TimeUnit.MILLISECONDS));
+            assertTrue(Thread.currentThread().isInterrupted());
+        } finally {
+            Thread.interrupted();
+        }
+    }
+
+    @Test(timeout = 5000L)
+    public void interruptSurvivesBoundaryFailure() {
+        AtomicInteger reads = new AtomicInteger();
+        IllegalStateException failure = new IllegalStateException("Boundary unavailable");
+        ServerShutdownBoundary boundary = new ServerShutdownBoundary(() -> {
+            if (reads.incrementAndGet() == 4) {
+                throw failure;
+            }
+            return false;
+        }, new Thread());
+        try {
+            Thread.currentThread().interrupt();
+            assertSame(failure, assertThrows(IllegalStateException.class,
+                    () -> boundary.await(1L, TimeUnit.SECONDS)));
             assertTrue(Thread.currentThread().isInterrupted());
         } finally {
             Thread.interrupted();
