@@ -54,6 +54,9 @@ import art.arcane.volmlib.nativelib.minecraft26_2.terrain.WorldgenTerrainHeightm
 import art.arcane.volmlib.nativelib.terrain.NativeBlockState;
 import art.arcane.volmlib.util.math.RNG;
 import com.mojang.datafixers.util.Pair;
+import io.papermc.paper.event.world.StructuresLocateEvent;
+import org.bukkit.craftbukkit.generator.structure.CraftStructure;
+import org.bukkit.craftbukkit.util.CraftLocation;
 import com.mojang.serialization.MapCodec;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Holder;
@@ -137,6 +140,8 @@ import java.util.function.Predicate;
 
 public class NativeChunkGenerator<C, D, P extends StructureStartPlan, O extends StructureOwnershipRecordView<O>, R extends NativeGenerationRoute> extends CustomChunkGenerator implements LongPredicate {
 
+    private static final boolean PAPER_STRUCTURE_LOCATE_EVENT = supportsStructureLocateEvent(
+            NativeChunkGenerator.class.getClassLoader());
     private static final Field BIOME_SOURCE;
     private static final Method SET_HEIGHT;
     private final ChunkGenerator delegate;
@@ -215,6 +220,17 @@ public class NativeChunkGenerator<C, D, P extends StructureStartPlan, O extends 
         }
         if (level != runtimeLevel || level.getChunkSource().getGenerator() != this) {
             return null;
+        }
+        if (PAPER_STRUCTURE_LOCATE_EVENT) {
+            StructureLocateRequest request = PaperStructureLocateEvent.call(level,
+                    new StructureLocateRequest(holders, pos, radius, findUnexplored, false, null));
+            if (request.handled()) {
+                return request.result();
+            }
+            holders = request.structures();
+            pos = request.origin();
+            radius = request.radius();
+            findUnexplored = request.findUnexplored();
         }
         try (R route = context.openRoute(
                      SectionPos.blockToSectionCoord(pos.getX()),
@@ -609,6 +625,15 @@ public class NativeChunkGenerator<C, D, P extends StructureStartPlan, O extends 
 
 
 
+    static boolean supportsStructureLocateEvent(ClassLoader loader) {
+        try {
+            Class.forName("io.papermc.paper.event.world.StructuresLocateEvent", false, loader);
+            return true;
+        } catch (ClassNotFoundException ignored) {
+            return false;
+        }
+    }
+
     private static NativeGenerationScope openHistoryRuntimeScope(
             NativeGenerationRoute route
     ) {
@@ -694,4 +719,37 @@ public class NativeChunkGenerator<C, D, P extends StructureStartPlan, O extends 
 
     private record BiomeRuntime(NativeBiomeSourceImpl source, NativeBiomeSourcePolicy<Holder<Biome>> policy) {
     }
+    private record StructureLocateRequest(
+            HolderSet<Structure> structures, BlockPos origin, int radius, boolean findUnexplored,
+            boolean handled, Pair<BlockPos, Holder<Structure>> result) {
+    }
+
+    private static final class PaperStructureLocateEvent {
+        private static StructureLocateRequest call(ServerLevel level, StructureLocateRequest request) {
+            if (request.structures().size() == 0) {
+                return request;
+            }
+            StructuresLocateEvent event = new StructuresLocateEvent(
+                    level.getWorld(), CraftLocation.toBukkit(request.origin(), level),
+                    request.structures().stream().map(CraftStructure::minecraftHolderToBukkit).toList(),
+                    request.radius(), request.findUnexplored());
+            if (!event.callEvent()) {
+                return new StructureLocateRequest(
+                        request.structures(), request.origin(), request.radius(), request.findUnexplored(), true, null);
+            }
+            StructuresLocateEvent.Result result = event.getResult();
+            if (result != null) {
+                BlockPos resultPosition = BlockPos.containing(result.pos().x(), result.pos().y(), result.pos().z());
+                return new StructureLocateRequest(
+                        request.structures(), request.origin(), request.radius(), request.findUnexplored(), true,
+                        Pair.of(resultPosition, CraftStructure.bukkitToMinecraftHolder(result.structure())));
+            }
+            HolderSet<Structure> targets = HolderSet.direct(
+                    CraftStructure::bukkitToMinecraftHolder, event.getStructures());
+            return new StructureLocateRequest(
+                    targets, CraftLocation.toBlockPos(event.getOrigin()), event.getRadius(),
+                    event.shouldFindUnexplored(), false, null);
+        }
+    }
+
 }

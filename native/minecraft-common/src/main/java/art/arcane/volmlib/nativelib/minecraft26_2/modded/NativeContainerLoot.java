@@ -95,7 +95,21 @@ public final class NativeContainerLoot {
         }
 
         public void fill(RNG rng, Consumer<String> debug) {
-            fillContainer(container, items, rng, debug);
+            List<ContainerSnapshot> snapshots = new ArrayList<>(2);
+            BlockEntity blockEntity = level.getBlockEntity(pos);
+            if (blockEntity instanceof Container primary) {
+                snapshots.add(ContainerSnapshot.capture(primary));
+            }
+            if (state.getBlock() instanceof ChestBlock && state.getValue(ChestBlock.TYPE) != ChestType.SINGLE) {
+                BlockEntity connected = level.getBlockEntity(ChestBlock.getConnectedBlockPos(pos, state));
+                if (connected instanceof Container secondary && secondary != blockEntity) {
+                    snapshots.add(ContainerSnapshot.capture(secondary));
+                }
+            }
+            if (snapshots.isEmpty()) {
+                snapshots.add(ContainerSnapshot.capture(container));
+            }
+            fillContainer(container, items, rng, debug, snapshots);
         }
     }
 
@@ -109,11 +123,29 @@ public final class NativeContainerLoot {
     }
 
     public static void fillContainer(Container container, List<ItemStack> items, RNG rng, Consumer<String> debug) {
-        for (ItemStack item : items) {
-            addItem(container, item, debug);
+        fillContainer(container, items, rng, debug, List.of(ContainerSnapshot.capture(container)));
+    }
+
+    private static void fillContainer(Container container, List<ItemStack> items, RNG rng,
+                                      Consumer<String> debug, List<ContainerSnapshot> snapshots) {
+        try {
+            for (ItemStack item : items) {
+                addItem(container, item == null ? null : item.copy(), debug);
+            }
+            scramble(container, rng);
+            container.setChanged();
+        } catch (RuntimeException | Error failure) {
+            for (ContainerSnapshot snapshot : snapshots) {
+                try {
+                    snapshot.restore();
+                } catch (RuntimeException | Error rollbackFailure) {
+                    if (rollbackFailure != failure) {
+                        failure.addSuppressed(rollbackFailure);
+                    }
+                }
+            }
+            throw failure;
         }
-        scramble(container, rng);
-        container.setChanged();
     }
 
     private static boolean hasNativeTable(ServerLevel level, ResourceKey<LootTable> key) {
@@ -236,4 +268,42 @@ public final class NativeContainerLoot {
         }
     }
 
+    private record ContainerSnapshot(Container container, List<ItemStack> items, ResourceKey<LootTable> lootTable, long lootSeed) {
+        private static ContainerSnapshot capture(Container container) {
+            RandomizableContainer randomizable = container instanceof RandomizableContainer value ? value : null;
+            ResourceKey<LootTable> lootTable = randomizable == null ? null : randomizable.getLootTable();
+            long lootSeed = randomizable == null ? 0 : randomizable.getLootTableSeed();
+            if (randomizable != null) {
+                randomizable.setLootTable(null);
+            }
+            try {
+                List<ItemStack> contents = new ArrayList<>(container.getContainerSize());
+                for (int slot = 0; slot < container.getContainerSize(); slot++) {
+                    contents.add(container.getItem(slot).copy());
+                }
+                return new ContainerSnapshot(container, contents, lootTable, lootSeed);
+            } finally {
+                if (randomizable != null) {
+                    randomizable.setLootTable(lootTable, lootSeed);
+                }
+            }
+        }
+
+        private void restore() {
+            RandomizableContainer randomizable = container instanceof RandomizableContainer value ? value : null;
+            if (randomizable != null) {
+                randomizable.setLootTable(null);
+            }
+            try {
+                for (int slot = 0; slot < items.size(); slot++) {
+                    container.setItem(slot, items.get(slot).copy());
+                }
+                container.setChanged();
+            } finally {
+                if (randomizable != null) {
+                    randomizable.setLootTable(lootTable, lootSeed);
+                }
+            }
+        }
+    }
 }
