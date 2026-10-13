@@ -9,6 +9,55 @@ import static org.junit.Assert.assertThrows;
 
 public class WorldCache2DDoubleTest {
     @Test
+    public void batchesOnlyUniqueMissesAndPreservesSpecialDoubleValues() {
+        AtomicInteger scalarCalls = new AtomicInteger();
+        AtomicInteger bulkCalls = new AtomicInteger();
+        WorldCache2DDouble cache = new WorldCache2DDouble((x, z) -> {
+            scalarCalls.incrementAndGet();
+            return -0D;
+        }, 16);
+        long[] coordinates = {CacheKey.key(0, 0), CacheKey.key(-1, 4), CacheKey.key(-1, 4),
+                CacheKey.key(Integer.MIN_VALUE, Integer.MAX_VALUE)};
+        cache.get(0, 0);
+        double[] values = new double[coordinates.length];
+        WorldCache2DDouble.BatchResolver resolver = (missing, count, target) -> {
+            bulkCalls.incrementAndGet();
+            assertEquals(2, count);
+            target[0] = Double.longBitsToDouble(0x7ff8000000000023L);
+            target[1] = Double.NEGATIVE_INFINITY;
+        };
+        cache.getBatch(coordinates, coordinates.length, values, resolver);
+        cache.getBatch(coordinates, coordinates.length, values, resolver);
+        assertEquals(1, scalarCalls.get());
+        assertEquals(1, bulkCalls.get());
+        assertEquals(Double.doubleToRawLongBits(-0D), Double.doubleToRawLongBits(values[0]));
+        assertEquals(0x7ff8000000000023L, Double.doubleToRawLongBits(values[1]));
+        assertEquals(Double.doubleToRawLongBits(values[1]), Double.doubleToRawLongBits(values[2]));
+        assertEquals(Double.NEGATIVE_INFINITY, values[3], 0D);
+    }
+
+    @Test
+    public void failedBatchesPublishNothingAndCanRetry() {
+        WorldCache2DDouble cache = new WorldCache2DDouble((x, z) -> 99D, 16);
+        long[] coordinates = {CacheKey.key(2, 3), CacheKey.key(-7, -9)};
+        double[] values = new double[2];
+        assertThrows(IllegalStateException.class, () -> cache.getBatch(coordinates, 2, values,
+                (missing, count, target) -> {
+                    target[0] = 42D;
+                    throw new IllegalStateException("unavailable");
+                }));
+        cache.getBatch(coordinates, 2, values, (missing, count, target) -> {
+            assertEquals(2, count);
+            target[0] = 1D;
+            target[1] = 2D;
+        });
+        assertEquals(1D, cache.get(2, 3), 0D);
+        assertEquals(2D, cache.get(-7, -9), 0D);
+        assertThrows(IllegalArgumentException.class,
+                () -> cache.getBatch(new long[4097], 4097, new double[4097], (missing, count, target) -> {}));
+    }
+
+    @Test
     public void interleavedFillsAndReadsRetainSignedChunkIdentity() {
         AtomicInteger calls = new AtomicInteger();
         WorldCache2DDouble cache = new WorldCache2DDouble((x, z) -> {
