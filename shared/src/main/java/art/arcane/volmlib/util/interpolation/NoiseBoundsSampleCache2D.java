@@ -46,6 +46,8 @@ final class NoiseBoundsSampleCache2D {
     private double[] sampledMaximums = new double[64];
     private int sampledMaximumCount;
     private int maximumReplayIndex;
+    private double interpolatedMinimum;
+    private double interpolatedMaximum;
 
     public NoiseBoundsSampleCache2D(int initialCapacity) {
         int minimumCapacity = Math.max(8, initialCapacity);
@@ -103,6 +105,19 @@ final class NoiseBoundsSampleCache2D {
 
     public NoiseProvider replayMaxView() {
         return replayMaxView;
+    }
+
+    void setInterpolatedBounds(double minimum, double maximum) {
+        interpolatedMinimum = minimum;
+        interpolatedMaximum = maximum;
+    }
+
+    double interpolatedMinimum() {
+        return interpolatedMinimum;
+    }
+
+    double interpolatedMaximum() {
+        return interpolatedMaximum;
     }
 
     private double sampleMin(double sampleX, double sampleZ) {
