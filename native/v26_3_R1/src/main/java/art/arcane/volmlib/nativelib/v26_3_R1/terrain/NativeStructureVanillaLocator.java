@@ -28,6 +28,9 @@ import java.util.Set;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 public final class NativeStructureVanillaLocator {
+    private static final int MAX_CANDIDATE_CHECKS = 4_096;
+    private static final int MAX_STRUCTURE_CHECKS = 512;
+    private static final int MAX_CHUNK_LOADS = 64;
     private NativeStructureVanillaLocator() {
     }
 
@@ -49,6 +52,7 @@ public final class NativeStructureVanillaLocator {
         }
 
         StructureManager structureManager = level.structureManager();
+        SearchBudget budget = new SearchBudget();
         Candidate best = null;
         double bestDistance = Double.MAX_VALUE;
         List<Map.Entry<RandomSpreadStructurePlacement, Set<Holder<Structure>>>> randomPlacements =
@@ -58,7 +62,7 @@ public final class NativeStructureVanillaLocator {
             if (placement instanceof ConcentricRingsStructurePlacement concentric) {
                 Candidate candidate = predictConcentric(
                         entry.getValue(), level, structureManager, origin, findUnexplored,
-                        state, concentric);
+                        state, concentric, budget);
                 if (candidate != null) {
                     double distance = origin.distSqr(candidate.result().getFirst());
                     if (distance < bestDistance) {
@@ -66,11 +70,17 @@ public final class NativeStructureVanillaLocator {
                         bestDistance = distance;
                     }
                 }
+                if (budget.exhausted) {
+                    return best;
+                }
             } else if (placement instanceof RandomSpreadStructurePlacement randomSpread) {
                 randomPlacements.add(Map.entry(randomSpread, entry.getValue()));
             }
         }
 
+        if (randomPlacements.isEmpty()) {
+            return best;
+        }
         int centerChunkX = SectionPos.blockToSectionCoord(origin.getX());
         int centerChunkZ = SectionPos.blockToSectionCoord(origin.getZ());
         int searchRadius = Math.max(0, radius);
@@ -81,8 +91,11 @@ public final class NativeStructureVanillaLocator {
                 Candidate candidate = predictRandomSpread(
                         entry.getValue(), level, structureManager,
                         centerChunkX, centerChunkZ, ring, findUnexplored,
-                        state.getLevelSeed(), entry.getKey());
+                        state.getLevelSeed(), entry.getKey(), budget);
                 if (candidate == null) {
+                    if (budget.exhausted) {
+                        return best;
+                    }
                     continue;
                 }
                 foundInRing = true;
@@ -105,7 +118,7 @@ public final class NativeStructureVanillaLocator {
                                                 BlockPos origin,
                                                 boolean findUnexplored,
                                                 ChunkGeneratorStructureState state,
-                                                ConcentricRingsStructurePlacement placement) {
+                                                ConcentricRingsStructurePlacement placement, SearchBudget budget) {
         List<ChunkPos> positions = state.getRingPositionsFor(placement);
         if (positions == null) {
             throw new IllegalStateException(
@@ -114,6 +127,9 @@ public final class NativeStructureVanillaLocator {
         Candidate best = null;
         double bestDistance = Double.MAX_VALUE;
         for (ChunkPos position : positions) {
+            if (!budget.claimCandidate()) {
+                return best;
+            }
             BlockPos locatePosition = new BlockPos(
                     SectionPos.sectionToBlockCoord(position.x(), 8),
                     32,
@@ -123,10 +139,13 @@ public final class NativeStructureVanillaLocator {
                 continue;
             }
             Candidate candidate = predictAt(
-                    holders, level, structureManager, findUnexplored, placement, position);
+                    holders, level, structureManager, findUnexplored, placement, position, budget);
             if (candidate != null) {
                 best = candidate;
                 bestDistance = distance;
+            }
+            if (budget.exhausted) {
+                return best;
             }
         }
         return best;
@@ -138,7 +157,7 @@ public final class NativeStructureVanillaLocator {
                                                   int centerChunkX, int centerChunkZ,
                                                   int ring, boolean findUnexplored,
                                                   long seed,
-                                                  RandomSpreadStructurePlacement placement) {
+                                                  RandomSpreadStructurePlacement placement, SearchBudget budget) {
         int spacing = placement.spacing();
         for (int offsetX = -ring; offsetX <= ring; offsetX++) {
             boolean edgeX = offsetX == -ring || offsetX == ring;
@@ -147,14 +166,17 @@ public final class NativeStructureVanillaLocator {
                 if (!edgeX && !edgeZ) {
                     continue;
                 }
+                if (!budget.claimCandidate()) {
+                    return null;
+                }
                 int gridChunkX = centerChunkX + spacing * offsetX;
                 int gridChunkZ = centerChunkZ + spacing * offsetZ;
                 ChunkPos candidatePosition = placement.getPotentialStructureChunk(
                         seed, gridChunkX, gridChunkZ);
                 Candidate candidate = predictAt(
                         holders, level, structureManager,
-                        findUnexplored, placement, candidatePosition);
-                if (candidate != null) {
+                        findUnexplored, placement, candidatePosition, budget);
+                if (candidate != null || budget.exhausted) {
                     return candidate;
                 }
             }
@@ -167,8 +189,11 @@ public final class NativeStructureVanillaLocator {
                                        StructureManager structureManager,
                                        boolean findUnexplored,
                                        StructurePlacement placement,
-                                       ChunkPos candidatePosition) {
+                                       ChunkPos candidatePosition, SearchBudget budget) {
         for (Holder<Structure> holder : holders) {
+            if (!budget.claimStructureCheck()) {
+                return null;
+            }
             Structure structure = holder.value();
             StructureCheckResult result = structureManager.checkStructurePresence(
                     candidatePosition, structure, placement, findUnexplored);
@@ -178,6 +203,9 @@ public final class NativeStructureVanillaLocator {
             if (!findUnexplored && result == StructureCheckResult.START_PRESENT) {
                 return new Candidate(
                         Pair.of(placement.getLocatePos(candidatePosition), holder), null);
+            }
+            if (!budget.claimChunkLoad()) {
+                return null;
             }
             ChunkAccess chunk = level.getChunk(
                     candidatePosition.x(), candidatePosition.z(), ChunkStatus.STRUCTURE_STARTS);
@@ -192,6 +220,40 @@ public final class NativeStructureVanillaLocator {
                     findUnexplored ? start : null);
         }
         return null;
+    }
+
+    private static final class SearchBudget {
+        private int candidateChecks;
+        private int structureChecks;
+        private int chunkLoads;
+        private boolean exhausted;
+
+        private boolean claimCandidate() {
+            if (candidateChecks >= MAX_CANDIDATE_CHECKS) {
+                exhausted = true;
+                return false;
+            }
+            candidateChecks++;
+            return true;
+        }
+
+        private boolean claimStructureCheck() {
+            if (structureChecks >= MAX_STRUCTURE_CHECKS) {
+                exhausted = true;
+                return false;
+            }
+            structureChecks++;
+            return true;
+        }
+
+        private boolean claimChunkLoad() {
+            if (chunkLoads >= MAX_CHUNK_LOADS) {
+                exhausted = true;
+                return false;
+            }
+            chunkLoads++;
+            return true;
+        }
     }
 
     public static final class Candidate {

@@ -356,6 +356,11 @@ public abstract class BSupport<P> {
                 BLAST_FURNACE
         }).forEach((i) -> b.add(i.ordinal()));
 
+        for (Material material : Material.values()) {
+            if (material.name().endsWith("COPPER_CHEST")) {
+                b.add(material.ordinal());
+            }
+        }
         return IntSets.unmodifiable(b);
     }
 
