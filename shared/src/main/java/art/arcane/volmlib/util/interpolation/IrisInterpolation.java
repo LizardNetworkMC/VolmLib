@@ -531,9 +531,7 @@ public class IrisInterpolation {
             scalarCache.beginUse();
         }
         try {
-            double min = dispatch(method, x, z, h, cache.minView());
-            double max = dispatch(method, x, z, h, cache.replayMaxView());
-            return new NoiseBounds(min, max);
+            return dispatchBounds(method, x, z, h, cache);
         } finally {
             if (ownsScalarCache) {
                 scalarCache.endUse();
@@ -541,6 +539,80 @@ public class IrisInterpolation {
             cache.bindProvider(previous);
             cache.endUse();
         }
+    }
+
+    private static NoiseBounds dispatchBounds(
+            InterpolationMethod method,
+            double x,
+            double z,
+            double radius,
+            NoiseBoundsSampleCache2D cache
+    ) {
+        switch (method) {
+            case BILINEAR:
+                interpolateBilinearBounds(x, z, radius, cache);
+                return new NoiseBounds(cache.interpolatedMinimum(), cache.interpolatedMaximum());
+            case BILINEAR_STARCAST_3:
+                return bilinearStarcastBounds(x, z, radius, 3, cache);
+            case BILINEAR_STARCAST_6:
+                return bilinearStarcastBounds(x, z, radius, 6, cache);
+            case BILINEAR_STARCAST_9:
+                return bilinearStarcastBounds(x, z, radius, 9, cache);
+            case BILINEAR_STARCAST_12:
+                return bilinearStarcastBounds(x, z, radius, 12, cache);
+            default:
+                double min = dispatch(method, x, z, radius, cache.minView());
+                double max = dispatch(method, x, z, radius, cache.replayMaxView());
+                return new NoiseBounds(min, max);
+        }
+    }
+
+    private static void interpolateBilinearBounds(double x, double z, double radius, NoiseBoundsSampleCache2D cache) {
+        double fx = Math.floor(x / radius);
+        double fz = Math.floor(z / radius);
+        double x1 = fx * radius;
+        double z1 = fz * radius;
+        double x2 = (fx + 1) * radius;
+        double z2 = (fz + 1) * radius;
+        double px = rangeScale(0, 1, x1, x2, x);
+        double pz = rangeScale(0, 1, z1, z2, z);
+        NoiseProvider minimum = cache.minView();
+        NoiseProvider maximum = cache.replayMaxView();
+        double min00 = minimum.noise(x1, z1);
+        double min10 = minimum.noise(x2, z1);
+        double min01 = minimum.noise(x1, z2);
+        double min11 = minimum.noise(x2, z2);
+        double max00 = maximum.noise(x1, z1);
+        double max10 = maximum.noise(x2, z1);
+        double max01 = maximum.noise(x1, z2);
+        double max11 = maximum.noise(x2, z2);
+        cache.setInterpolatedBounds(
+                blerp(min00, min10, min01, min11, px, pz),
+                blerp(max00, max10, max01, max11, px, pz)
+        );
+    }
+
+    private static NoiseBounds bilinearStarcastBounds(
+            double x,
+            double z,
+            double radius,
+            int checks,
+            NoiseBoundsSampleCache2D cache
+    ) {
+        double[] offsets = STARCAST_OFFSETS[checks / 3 - 1];
+        double minimum = 0D;
+        double maximum = 0D;
+        for (int sample = 0; sample < offsets.length; sample += 2) {
+            interpolateBilinearBounds(
+                    x + radius * offsets[sample],
+                    z + radius * offsets[sample + 1],
+                    radius,
+                    cache
+            );
+            minimum += cache.interpolatedMinimum();
+            maximum += cache.interpolatedMaximum();
+        }
+        return new NoiseBounds(minimum / checks, maximum / checks);
     }
 
     private static double[][] createStarcastOffsets() {

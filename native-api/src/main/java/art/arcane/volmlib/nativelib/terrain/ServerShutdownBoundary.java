@@ -5,7 +5,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.function.BooleanSupplier;
 
 public final class ServerShutdownBoundary {
-    private static final long MAX_JOIN_SLICE_MILLIS = 1000L;
+    private static final long MAX_WAIT_SLICE_NANOS = TimeUnit.SECONDS.toNanos(1L);
 
     private final BooleanSupplier boundaryReached;
     private final Thread serverThread;
@@ -28,31 +28,29 @@ public final class ServerShutdownBoundary {
         long timeoutNanos = Math.max(0L, activeUnit.toNanos(timeout));
         long started = System.nanoTime();
         boolean interrupted = false;
-        while (!boundaryReached.getAsBoolean()) {
-            long remaining = timeoutNanos - (System.nanoTime() - started);
-            if (remaining <= 0L || !serverThread.isAlive()) {
-                restoreInterrupt(interrupted);
-                return boundaryReached.getAsBoolean();
+        try {
+            while (!boundaryReached.getAsBoolean()) {
+                long remaining = timeoutNanos - (System.nanoTime() - started);
+                if (remaining <= 0L) {
+                    return boundaryReached.getAsBoolean();
+                }
+
+                long waitNanos = Math.min(MAX_WAIT_SLICE_NANOS, remaining);
+                try {
+                    if (serverThread.isAlive()) {
+                        TimeUnit.NANOSECONDS.timedJoin(serverThread, waitNanos);
+                    } else {
+                        TimeUnit.NANOSECONDS.sleep(waitNanos);
+                    }
+                } catch (InterruptedException e) {
+                    interrupted = true;
+                }
             }
-
-            long joinMillis = Math.max(
-                    1L,
-                    Math.min(MAX_JOIN_SLICE_MILLIS, TimeUnit.NANOSECONDS.toMillis(remaining))
-            );
-            try {
-                serverThread.join(joinMillis);
-            } catch (InterruptedException e) {
-                interrupted = true;
+            return true;
+        } finally {
+            if (interrupted) {
+                Thread.currentThread().interrupt();
             }
-        }
-
-        restoreInterrupt(interrupted);
-        return true;
-    }
-
-    private static void restoreInterrupt(boolean interrupted) {
-        if (interrupted) {
-            Thread.currentThread().interrupt();
         }
     }
 }

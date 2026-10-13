@@ -2,7 +2,10 @@ package art.arcane.volmlib.util.interpolation;
 
 import org.junit.Test;
 
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Random;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -11,6 +14,14 @@ import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.fail;
 
 public class IrisInterpolationBoundsTest {
+    private static final InterpolationMethod[] PAIRED_METHODS = {
+            InterpolationMethod.BILINEAR,
+            InterpolationMethod.BILINEAR_STARCAST_3,
+            InterpolationMethod.BILINEAR_STARCAST_6,
+            InterpolationMethod.BILINEAR_STARCAST_9,
+            InterpolationMethod.BILINEAR_STARCAST_12
+    };
+
     @Test
     public void everyMethodPreservesSeparatePassValuesAndSamplesEachCoordinateOnce() {
         Random random = new Random(19053);
@@ -53,6 +64,63 @@ public class IrisInterpolationBoundsTest {
             assertEquals(expectedSamples.keySet(), actualSamples.keySet());
             for (int calls : actualSamples.values()) {
                 assertEquals(1, calls);
+            }
+        }
+    }
+
+    @Test
+    public void pairedMethodsPreserveRawValuesAndCallbackOrderAtGridEdges() {
+        for (InterpolationMethod method : PAIRED_METHODS) {
+            for (double scale : new double[]{1D, 6D, 12D, 23D, 52D, 200D, 7.75D, 8192D}) {
+                double[] points = {-30_000_000D, -scale, Math.nextDown(-scale), Math.nextUp(-scale),
+                        -0.75D, -0D, 0D, Math.nextDown(scale), scale, Math.nextUp(scale), 30_000_000D};
+                for (int index = 0; index < points.length; index++) {
+                    double x = points[index];
+                    double z = points[points.length - index - 1];
+                    Map<Coordinate, NoiseBounds> expectedSamples = new LinkedHashMap<>();
+                    AtomicInteger expectedCalls = new AtomicInteger();
+                    NoiseBounds expected = separatePasses(method, x, z, scale,
+                            (sx, sz) -> orderedBounds(sx, sz, expectedCalls.incrementAndGet()), expectedSamples);
+                    List<Coordinate> actualSamples = new ArrayList<>();
+                    AtomicInteger actualCalls = new AtomicInteger();
+                    NoiseBounds actual = IrisInterpolation.getNoiseBounds(method, x, z, scale, (sx, sz) -> {
+                        actualSamples.add(new Coordinate(sx, sz));
+                        return orderedBounds(sx, sz, actualCalls.incrementAndGet());
+                    });
+                    assertBounds(expected, actual);
+                    assertEquals(new ArrayList<>(expectedSamples.keySet()), actualSamples);
+                }
+            }
+        }
+    }
+
+    @Test
+    public void pairedMethodsPreserveSignedZeroAndNonfiniteArithmetic() {
+        double[] values = {0D, -0D, Double.MIN_VALUE, -Double.MIN_VALUE,
+                Double.MAX_VALUE, -Double.MAX_VALUE, Double.POSITIVE_INFINITY,
+                Double.NEGATIVE_INFINITY, Double.longBitsToDouble(0x7ff8000000000042L)};
+        for (InterpolationMethod method : PAIRED_METHODS) {
+            for (int index = 0; index < values.length; index++) {
+                double minimum = values[index];
+                double maximum = values[values.length - index - 1];
+                NoiseBoundsProvider provider = (x, z) -> new NoiseBounds(minimum, maximum);
+                NoiseBounds expected = separatePasses(method, -7D, -0D, 7D, provider, new HashMap<>());
+                assertBounds(expected, IrisInterpolation.getNoiseBounds(method, -7D, -0D, 7D, provider));
+            }
+        }
+    }
+
+    @Test
+    public void nestedPairedProvidersKeepTheirOwnCacheAndReplay() {
+        for (InterpolationMethod outer : PAIRED_METHODS) {
+            for (InterpolationMethod inner : PAIRED_METHODS) {
+                NoiseBoundsProvider expectedProvider = (x, z) -> separatePasses(inner,
+                        x - 17D, z + 19D, 6D, IrisInterpolationBoundsTest::asymmetricBounds, new HashMap<>());
+                NoiseBoundsProvider actualProvider = (x, z) -> IrisInterpolation.getNoiseBounds(inner,
+                        x - 17D, z + 19D, 6D, IrisInterpolationBoundsTest::asymmetricBounds);
+                NoiseBounds expected = separatePasses(outer, -93D, 201D, 23D,
+                        expectedProvider, new HashMap<>());
+                assertBounds(expected, IrisInterpolation.getNoiseBounds(outer, -93D, 201D, 23D, actualProvider));
             }
         }
     }
@@ -131,9 +199,14 @@ public class IrisInterpolationBoundsTest {
         return new NoiseBounds(minimum, minimum + 17D + StrictMath.cos(x * 0.0123D - z * 0.019D) * 11D);
     }
 
+    private static NoiseBounds orderedBounds(double x, double z, int call) {
+        NoiseBounds bounds = asymmetricBounds(x, z);
+        return new NoiseBounds(bounds.min() + call * 0.001D, bounds.max() - call * 0.003D);
+    }
+
     private static void assertBounds(NoiseBounds expected, NoiseBounds actual) {
-        assertEquals(Double.doubleToLongBits(expected.min()), Double.doubleToLongBits(actual.min()));
-        assertEquals(Double.doubleToLongBits(expected.max()), Double.doubleToLongBits(actual.max()));
+        assertEquals(Double.doubleToRawLongBits(expected.min()), Double.doubleToRawLongBits(actual.min()));
+        assertEquals(Double.doubleToRawLongBits(expected.max()), Double.doubleToRawLongBits(actual.max()));
     }
 
     private record Coordinate(double x, double z) {
