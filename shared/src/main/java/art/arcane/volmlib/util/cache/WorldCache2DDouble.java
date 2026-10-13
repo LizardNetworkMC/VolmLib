@@ -2,6 +2,9 @@ package art.arcane.volmlib.util.cache;
 
 import art.arcane.volmlib.util.function.IntIntToDoubleFunction;
 import com.googlecode.concurrentlinkedhashmap.ConcurrentLinkedHashMap;
+import it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap;
+
+import java.util.Objects;
 
 public class WorldCache2DDouble {
     private static final int RECENT_KEY_SLOTS = 64;
@@ -26,6 +29,53 @@ public class WorldCache2DDouble {
         long key = CacheKey.key(x >> 4, z >> 4);
         ChunkCache2DDouble chunk = chunkFor(key);
         return chunk.get(x, z, resolver);
+    }
+
+    public void getBatch(long[] coordinates, int count, double[] target, BatchResolver batchResolver) {
+        Objects.checkFromIndexSize(0, count, coordinates.length);
+        Objects.checkFromIndexSize(0, count, target.length);
+        if (count > 4096) {
+            throw new IllegalArgumentException("Height batch exceeds 4096 samples");
+        }
+        Objects.requireNonNull(batchResolver, "batchResolver");
+        long[] missing = new long[count];
+        int[] slots = new int[count];
+        ChunkCache2DDouble[] owners = new ChunkCache2DDouble[count];
+        Long2IntOpenHashMap indices = new Long2IntOpenHashMap(count);
+        indices.defaultReturnValue(-1);
+        int size = 0;
+        for (int index = 0; index < count; index++) {
+            long coordinate = coordinates[index];
+            int x = CacheKey.keyX(coordinate);
+            int z = CacheKey.keyZ(coordinate);
+            ChunkCache2DDouble chunk = chunkFor(CacheKey.key(x >> 4, z >> 4));
+            if (chunk.copyIfReady(x, z, target, index)) {
+                slots[index] = -1;
+                continue;
+            }
+            int slot = indices.get(coordinate);
+            if (slot < 0) {
+                slot = size++;
+                indices.put(coordinate, slot);
+                missing[slot] = coordinate;
+                owners[slot] = chunk;
+            }
+            slots[index] = slot;
+        }
+        if (size == 0) {
+            return;
+        }
+        double[] sampled = new double[size];
+        batchResolver.resolve(missing, size, sampled);
+        for (int index = 0; index < size; index++) {
+            sampled[index] = owners[index].publish(CacheKey.keyX(missing[index]),
+                    CacheKey.keyZ(missing[index]), sampled[index]);
+        }
+        for (int index = 0; index < count; index++) {
+            if (slots[index] >= 0) {
+                target[index] = sampled[slots[index]];
+            }
+        }
     }
 
     public void fillChunk(int chunkX, int chunkZ, Object[] target) {
@@ -81,6 +131,11 @@ public class WorldCache2DDouble {
         recent.key = key;
         recent.chunk = chunk;
         return chunk;
+    }
+
+    @FunctionalInterface
+    public interface BatchResolver {
+        void resolve(long[] coordinates, int count, double[] target);
     }
 
     private static final class RecentChunk {
