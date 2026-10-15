@@ -21,6 +21,7 @@ package art.arcane.volmlib.nativelib.minecraft26_2.modded;
 import com.google.gson.JsonElement;
 
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 
 public record NativeWorldgenSnapshot(
@@ -29,6 +30,7 @@ public record NativeWorldgenSnapshot(
         List<WorldgenStructure> structures,
         List<WorldgenDimensionType> dimensionTypes,
         List<WorldgenLevelStem> levelStems,
+        Map<String, List<String>> blockTags,
         EncodeFailures failures) {
     public NativeWorldgenSnapshot {
         biomes = List.copyOf(Objects.requireNonNull(biomes, "biomes"));
@@ -36,6 +38,7 @@ public record NativeWorldgenSnapshot(
         structures = List.copyOf(Objects.requireNonNull(structures, "structures"));
         dimensionTypes = List.copyOf(Objects.requireNonNull(dimensionTypes, "dimensionTypes"));
         levelStems = List.copyOf(Objects.requireNonNull(levelStems, "levelStems"));
+        blockTags = Map.copyOf(Objects.requireNonNull(blockTags, "blockTags"));
         Objects.requireNonNull(failures, "failures");
     }
 

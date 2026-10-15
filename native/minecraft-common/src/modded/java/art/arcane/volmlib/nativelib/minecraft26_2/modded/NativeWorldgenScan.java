@@ -46,6 +46,7 @@ import net.minecraft.world.entity.MobCategory;
 import net.minecraft.world.level.biome.Biome;
 import net.minecraft.world.level.biome.BiomeSource;
 import net.minecraft.world.level.biome.MobSpawnSettings;
+import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.chunk.ChunkGenerator;
 import net.minecraft.world.level.dimension.DimensionType;
 import net.minecraft.world.level.dimension.LevelStem;
@@ -63,6 +64,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.TreeMap;
 import java.util.TreeSet;
 import java.util.function.UnaryOperator;
 
@@ -77,6 +79,7 @@ public final class NativeWorldgenScan {
     private final List<WorldgenStructure> structures = new ArrayList<>();
     private final List<PendingDimensionType> dimensionTypes = new ArrayList<>();
     private final List<PendingLevelStem> levelStems = new ArrayList<>();
+    private final Map<String, List<String>> blockTags = new TreeMap<>();
 
     private NativeWorldgenScan(RegistryAccess access, UnaryOperator<Biome> unmodifiedBiome) {
         this.access = Objects.requireNonNull(access, "access");
@@ -92,6 +95,7 @@ public final class NativeWorldgenScan {
         scan.scanStructures();
         scan.scanDimensionTypes();
         scan.scanLevelStems();
+        scan.scanBlockTags();
         return scan;
     }
 
@@ -130,7 +134,7 @@ public final class NativeWorldgenScan {
                     typeOf(biomeSource), generatorJson));
         }
         return new NativeWorldgenSnapshot(encodedBiomes, encodedFeatures, structures, encodedDimensionTypes, encodedStems,
-                encoder.failures());
+                blockTags, encoder.failures());
     }
 
     private void scanBiomes() {
@@ -235,6 +239,11 @@ public final class NativeWorldgenScan {
 
     private static <T> List<String> tags(Holder<T> holder) {
         return holder.tags().map(tag -> tag.location().toString()).sorted().toList();
+    }
+
+    private void scanBlockTags() {
+        BuiltInRegistries.BLOCK.getTags().forEach((HolderSet.Named<Block> tag) ->
+                blockTags.put(tag.key().location().toString(), holderKeys(tag)));
     }
 
     private static <T> List<String> holderKeysInOrder(HolderSet<T> holders) {
