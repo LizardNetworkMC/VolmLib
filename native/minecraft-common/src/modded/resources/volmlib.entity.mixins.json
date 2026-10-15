@@ -14,7 +14,8 @@
     "ChunkTerrainReceiptMixin",
     "LevelChunkTerrainReceiptMixin",
     "SerializableTerrainReceiptMixin",
-    "LivingEntityLootMixin"
+    "LivingEntityLootMixin",
+    "PackRepositorySelectionMixin"
   ],
   "injectors": {
     "defaultRequire": 1
