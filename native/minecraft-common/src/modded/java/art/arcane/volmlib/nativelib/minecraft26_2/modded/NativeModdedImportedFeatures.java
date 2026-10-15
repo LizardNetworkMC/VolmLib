@@ -23,6 +23,9 @@ import it.unimi.dsi.fastutil.ints.IntSet;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Holder;
 import net.minecraft.core.HolderSet;
+import net.minecraft.resources.ResourceKey;
+import net.minecraft.tags.TagKey;
+import net.minecraft.world.level.levelgen.carver.WorldCarver;
 import net.minecraft.core.Registry;
 import net.minecraft.core.SectionPos;
 import net.minecraft.core.registries.Registries;
@@ -44,6 +47,7 @@ import net.minecraft.world.level.levelgen.placement.PlacedFeature;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
@@ -68,8 +72,11 @@ public final class NativeModdedImportedFeatures {
     }
 
     public BiomeGenerationSettings generationSettings(Holder<Biome> biome, NativeFeatureTable table) {
-        return table == null ? biome.value().getGenerationSettings()
-                : settingsFor(biome, ((FeatureTable) table).derivatives());
+        if (table == null) {
+            return biome.value().getGenerationSettings();
+        }
+        FeatureTable featureTable = (FeatureTable) table;
+        return settingsFor(biome, featureTable.derivatives(), featureTable.scoped());
     }
 
     public NativeFeatureTable buildTable(NativeImportedFeaturePolicy<?> policy, NativeImportedFeatureControl control, long generation) {
@@ -98,12 +105,13 @@ public final class NativeModdedImportedFeatures {
             }
         }
         Map<String, Holder<Biome>> derivatives = customBiomeDerivatives(policy, byKey);
+        Map<String, BiomeGenerationSettings> scoped = scopedSettings(biomes, derivatives, control);
         List<FeatureSorter.StepFeatureData> steps;
         try {
             // Same inputs as vanilla's own memo, built here so it can be keyed on the Iris pack generation and
             // so the cycle failure lands at bind time.
             steps = FeatureSorter.buildFeaturesPerStep(biomes,
-                    (Holder<Biome> biome) -> settingsFor(biome, derivatives).features(), true);
+                    (Holder<Biome> biome) -> settingsFor(biome, derivatives, scoped).features(), true);
         } catch (IllegalStateException error) {
             String message = error.getMessage();
             if (message == null || !message.contains(CYCLE_MARKER)) {
@@ -116,7 +124,7 @@ public final class NativeModdedImportedFeatures {
         }
         boolean filtered = control.hasFeatureFilter();
         return new FeatureTable(generation, policy, control, List.copyOf(biomes), Set.copyOf(biomes),
-                Map.copyOf(byKey), steps, Map.copyOf(derivatives), filtered);
+                Map.copyOf(byKey), steps, Map.copyOf(derivatives), Map.copyOf(scoped), filtered);
     }
 
     /**
@@ -146,12 +154,64 @@ public final class NativeModdedImportedFeatures {
     }
 
     private static BiomeGenerationSettings settingsFor(Holder<Biome> biome,
-                                                       Map<String, Holder<Biome>> derivatives) {
-        Holder<Biome> mapped = derivatives.get(holderKey(biome));
+                                                       Map<String, Holder<Biome>> derivatives,
+                                                       Map<String, BiomeGenerationSettings> scoped) {
+        String key = holderKey(biome);
+        BiomeGenerationSettings scopedSettings = scoped.get(key);
+        if (scopedSettings != null) {
+            return scopedSettings;
+        }
+        Holder<Biome> mapped = derivatives.get(key);
         return mapped == null
                 ? biome.value().getGenerationSettings()
                 : mapped.value().getGenerationSettings();
     }
+
+    private static Map<String, BiomeGenerationSettings> scopedSettings(List<Holder<Biome>> biomes,
+                                                                       Map<String, Holder<Biome>> derivatives,
+                                                                       NativeImportedFeatureControl control) {
+        if (!control.hasBiomeFeatureRules()) {
+            return Map.of();
+        }
+        Map<String, BiomeGenerationSettings> scoped = new HashMap<>(biomes.size());
+        for (Holder<Biome> biome : biomes) {
+            String key = holderKey(biome);
+            if (key == null) {
+                continue;
+            }
+            Holder<Biome> mapped = derivatives.get(key);
+            Holder<Biome> source = mapped == null ? biome : mapped;
+            String sourceKey = holderKey(source);
+            if (sourceKey == null) {
+                continue;
+            }
+            Set<String> tags = new HashSet<>();
+            source.tags().forEach((TagKey<Biome> tag) -> tags.add(tag.location().toString().toLowerCase(Locale.ROOT)));
+            scoped.put(key, scopeSettings(source.value().getGenerationSettings(), sourceKey, tags, control));
+        }
+        return scoped;
+    }
+
+    static BiomeGenerationSettings scopeSettings(BiomeGenerationSettings settings, String biomeKey, Set<String> biomeTags,
+                                                 NativeImportedFeatureControl control) {
+        BiomeGenerationSettings.PlainBuilder builder = new BiomeGenerationSettings.PlainBuilder();
+        for (Holder<WorldCarver> carver : settings.getCarvers()) {
+            builder.addCarver(carver);
+        }
+        List<HolderSet<PlacedFeature>> steps = settings.features();
+        for (int step = 0; step < steps.size(); step++) {
+            for (Holder<PlacedFeature> feature : steps.get(step)) {
+                String featureKey = feature.unwrapKey()
+                        .map((ResourceKey<PlacedFeature> key) -> key.identifier().toString().toLowerCase(Locale.ROOT))
+                        .orElse(null);
+                if (featureKey == null || control.shouldGenerateInBiome(biomeKey, biomeTags, featureKey)) {
+                    builder.addFeature(step, feature);
+                }
+            }
+        }
+        return builder.build();
+    }
+
 
     /**
      * Runs the vanilla placed-feature pass for one chunk, on the calling worldgen thread. A no-op while the
@@ -211,7 +271,7 @@ public final class NativeModdedImportedFeatures {
                            BlockPos origin, int stepIndex) {
         IntSet stepFeatures = new IntArraySet();
         for (Holder<Biome> biome : chunkBiomes) {
-            List<HolderSet<PlacedFeature>> biomeFeatures = settingsFor(biome, table.derivatives()).features();
+            List<HolderSet<PlacedFeature>> biomeFeatures = settingsFor(biome, table.derivatives(), table.scoped()).features();
             if (stepIndex >= biomeFeatures.size()) {
                 continue;
             }
@@ -311,7 +371,8 @@ public final class NativeModdedImportedFeatures {
                                 List<Holder<Biome>> biomes, Set<Holder<Biome>> biomeSet,
                                 Map<String, Holder<Biome>> byKey,
                                 List<FeatureSorter.StepFeatureData> steps,
-                                Map<String, Holder<Biome>> derivatives, boolean filtered) implements NativeFeatureTable {
+                                Map<String, Holder<Biome>> derivatives,
+                                Map<String, BiomeGenerationSettings> scoped, boolean filtered) implements NativeFeatureTable {
         @Override
         public int biomeCount() {
             return biomes.size();
