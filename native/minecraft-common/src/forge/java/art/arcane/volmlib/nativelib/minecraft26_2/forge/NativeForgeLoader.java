@@ -23,6 +23,7 @@ import art.arcane.volmlib.nativelib.minecraft26_2.modded.ModdedServerAccess;
 import art.arcane.volmlib.nativelib.minecraft26_2.modded.ModdedServerLevels;
 import art.arcane.volmlib.nativelib.terrain.NativeWorld;
 
+import art.arcane.volmlib.nativelib.minecraft26_2.modded.NativeModMetadata;
 import art.arcane.volmlib.nativelib.minecraft26_2.modded.NativeModdedLoader;
 import art.arcane.volmlib.nativelib.modded.NativeLoaderOptions;
 
@@ -46,12 +47,15 @@ import net.minecraftforge.fml.loading.FMLEnvironment;
 import net.minecraftforge.fml.loading.FMLLoader;
 import net.minecraftforge.fml.loading.FMLPaths;
 import net.minecraftforge.forgespi.language.IModFileInfo;
+import net.minecraftforge.forgespi.language.IModInfo;
 import net.minecraftforge.server.ServerLifecycleHooks;
 import net.minecraftforge.server.permission.PermissionAPI;
 import net.minecraftforge.server.permission.nodes.PermissionNode;
 import net.minecraftforge.server.permission.nodes.PermissionTypes;
 
 import net.minecraftforge.fml.ModContainer;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Objects;
 import java.io.File;
 import java.nio.file.Path;
@@ -90,6 +94,16 @@ public final class NativeForgeLoader implements NativeModdedLoader {
         return ModList.getModContainerById(options.modId())
                 .map((ModContainer container) -> container.getModInfo().getVersion().toString())
                 .orElse("unknown");
+    }
+
+    @Override
+    public List<NativeModMetadata> mods() {
+        List<IModInfo> infos = ModList.getMods();
+        List<NativeModMetadata> mods = new ArrayList<>(infos.size());
+        for (IModInfo info : infos) {
+            mods.add(new NativeModMetadata(info.getModId(), info.getDisplayName(), info.getVersion().toString()));
+        }
+        return List.copyOf(mods);
     }
 
     @Override
