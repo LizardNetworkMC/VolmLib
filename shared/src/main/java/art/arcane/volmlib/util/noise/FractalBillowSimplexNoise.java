@@ -25,6 +25,7 @@ import java.lang.invoke.MethodHandle;
 import java.util.concurrent.atomic.AtomicLong;
 
 public class FractalBillowSimplexNoise implements NoiseGenerator, OctaveNoise {
+    private static final int MAX_OCTAVES = 16;
     private static final boolean DIAGNOSTICS = Boolean.getBoolean("volmlib.noise.nativeBillowDiagnostics");
     private static final AtomicLong NATIVE_SAMPLES = new AtomicLong();
     private static final NativeBackend NATIVE_BACKEND = createNativeBackend();
@@ -77,10 +78,10 @@ public class FractalBillowSimplexNoise implements NoiseGenerator, OctaveNoise {
     @Override
     public void setOctaves(int o) {
         n.setFractalOctaves(o);
-        octaves = o;
+        octaves = Math.max(1, Math.min(MAX_OCTAVES, o));
         double amplitude = 0.5D;
         double amplitudeSum = 1D;
-        for (int octave = 1; octave < o; octave++) {
+        for (int octave = 1; octave < octaves; octave++) {
             amplitudeSum += amplitude;
             amplitude *= 0.5D;
         }
