@@ -24,7 +24,6 @@ public interface NativeModdedBiomePolicy<H, S> {
 
     record ClosestQuery<H, S>(Predicate<H> allowed, S sampler,
                              Supplier<NativeBiomeSourcePolicy.BiomeLocation<H>> unboundFallback,
-                             Supplier<NativeBiomeSourcePolicy.BiomeLocation<H>> defaultFallback,
                              NativeBiomeSourcePolicy.ClosestSearch<H> search) {
     }
 

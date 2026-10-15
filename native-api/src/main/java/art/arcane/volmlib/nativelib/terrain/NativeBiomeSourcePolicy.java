@@ -37,7 +37,7 @@ public interface NativeBiomeSourcePolicy<H> {
                               IntUnaryOperator random, Supplier<BiomeLocation<H>> fallback) {
     }
 
-    record ClosestQuery<H>(Predicate<H> allowed, Supplier<BiomeLocation<H>> fallback, ClosestSearch<H> search) {
+    record ClosestQuery<H>(Predicate<H> allowed, ClosestSearch<H> search) {
     }
 
     record NearbyQuery<H>(int x, int y, int z, int radius, Supplier<Set<H>> fallback) {

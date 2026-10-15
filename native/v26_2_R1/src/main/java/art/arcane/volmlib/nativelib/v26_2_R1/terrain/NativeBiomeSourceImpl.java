@@ -91,8 +91,6 @@ public final class NativeBiomeSourceImpl extends BiomeSource implements Structur
         SearchGeometry geometry = new SearchGeometry(origin, radius, horizontalResolution, verticalResolution,
                 level.getMinY(), level.getMaxY());
         return position(policy.findClosestBiome3d(new ClosestQuery<>(allowed,
-                () -> location(super.findClosestBiome3d(origin, radius, horizontalResolution,
-                        verticalResolution, allowed, sampler, level)),
                 (candidates, resolver) -> search(geometry, candidates, resolver))));
     }
 
