@@ -35,6 +35,7 @@ public final class NativeMixinFlags {
     private static volatile boolean structureTemplatePaletteRan;
     private static volatile boolean worldOpenFlowsRan;
     private static volatile boolean worldTypeEntryRan;
+    private static volatile boolean packSelectionRan;
 
     private NativeMixinFlags() {
     }
@@ -84,6 +85,12 @@ public final class NativeMixinFlags {
         }
     }
 
+    public static void markPackSelection() {
+        if (!packSelectionRan) {
+            packSelectionRan = true;
+        }
+    }
+
     public static boolean registryClientNamesRan() {
         return registryClientNamesRan;
     }
@@ -112,6 +119,10 @@ public final class NativeMixinFlags {
         return worldTypeEntryRan;
     }
 
+    public static boolean packSelectionRan() {
+        return packSelectionRan;
+    }
+
     public static void reset() {
         entityPersistenceRan = false;
         registryClientNamesRan = false;
@@ -120,5 +131,6 @@ public final class NativeMixinFlags {
         structureTemplatePaletteRan = false;
         worldOpenFlowsRan = false;
         worldTypeEntryRan = false;
+        packSelectionRan = false;
     }
 }

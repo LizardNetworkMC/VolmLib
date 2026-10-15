@@ -10,12 +10,19 @@ import net.minecraft.server.packs.repository.PackSource;
 import net.minecraft.server.packs.repository.RepositorySource;
 
 import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Consumer;
+import java.util.function.Function;
 import java.util.function.Supplier;
 
 public final class NativeDatapackSource implements RepositorySource {
+    private static final Set<String> PINNED_LAST = ConcurrentHashMap.newKeySet();
+
     private final Supplier<PackHandle> pack;
     private final Runnable loaded;
 
@@ -37,9 +44,28 @@ public final class NativeDatapackSource implements RepositorySource {
         return new PackHandle(pack);
     }
 
+    public static Set<String> pinnedIds() {
+        return Set.copyOf(PINNED_LAST);
+    }
+
+    public static <T> List<T> orderPinnedLast(List<T> selected, Function<T, String> id, Set<String> pinnedIds) {
+        if (pinnedIds.isEmpty()) {
+            return selected;
+        }
+        List<T> ordered = new ArrayList<>(selected.size());
+        List<T> pinned = new ArrayList<>(pinnedIds.size());
+        for (T entry : selected) {
+            (pinnedIds.contains(id.apply(entry)) ? pinned : ordered).add(entry);
+        }
+        ordered.addAll(pinned);
+        return ordered.equals(selected) ? selected : ordered;
+    }
+
     @Override
     public void loadPacks(Consumer<Pack> consumer) {
-        consumer.accept(pack.get().pack);
+        Pack loadedPack = pack.get().pack;
+        PINNED_LAST.add(loadedPack.getId());
+        consumer.accept(loadedPack);
         loaded.run();
     }
 

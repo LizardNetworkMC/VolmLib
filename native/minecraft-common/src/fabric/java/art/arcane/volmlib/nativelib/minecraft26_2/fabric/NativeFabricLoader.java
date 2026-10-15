@@ -23,6 +23,7 @@ import art.arcane.volmlib.nativelib.minecraft26_2.modded.ModdedServerAccess;
 import art.arcane.volmlib.nativelib.minecraft26_2.modded.ModdedServerLevels;
 import art.arcane.volmlib.nativelib.terrain.NativeWorld;
 
+import art.arcane.volmlib.nativelib.minecraft26_2.modded.NativeModMetadata;
 import art.arcane.volmlib.nativelib.minecraft26_2.modded.NativeModdedLoader;
 import art.arcane.volmlib.nativelib.modded.NativeLoaderOptions;
 
@@ -50,7 +51,10 @@ import net.minecraft.world.level.biome.BiomeSpecialEffects;
 import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.level.block.state.BlockState;
 
+import java.util.ArrayList;
+import java.util.Collection;
 import java.util.Collections;
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.WeakHashMap;
@@ -84,6 +88,17 @@ public final class NativeFabricLoader implements NativeModdedLoader {
         return FabricLoader.getInstance().getModContainer(options.modId())
                 .map((ModContainer container) -> container.getMetadata().getVersion().getFriendlyString())
                 .orElse("unknown");
+    }
+
+    @Override
+    public List<NativeModMetadata> mods() {
+        Collection<ModContainer> containers = FabricLoader.getInstance().getAllMods();
+        List<NativeModMetadata> mods = new ArrayList<>(containers.size());
+        for (ModContainer container : containers) {
+            mods.add(new NativeModMetadata(container.getMetadata().getId(), container.getMetadata().getName(),
+                    container.getMetadata().getVersion().getFriendlyString()));
+        }
+        return List.copyOf(mods);
     }
 
     @Override

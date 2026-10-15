@@ -32,6 +32,7 @@ import net.minecraft.world.level.block.state.BlockState;
 
 import java.io.File;
 import java.nio.file.Path;
+import java.util.List;
 
 public interface NativeModdedLoader {
     String platformName();
@@ -39,6 +40,8 @@ public interface NativeModdedLoader {
     String minecraftVersion();
 
     String modVersion();
+
+    List<NativeModMetadata> mods();
 
     NativeModdedServer currentServer();
 

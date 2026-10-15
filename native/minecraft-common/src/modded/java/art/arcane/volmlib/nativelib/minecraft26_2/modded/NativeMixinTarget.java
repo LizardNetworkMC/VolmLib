@@ -9,7 +9,8 @@ public enum NativeMixinTarget {
     MOB("net.minecraft.world.entity.Mob"),
     STRUCTURE_PALETTE("net.minecraft.world.level.levelgen.structure.templatesystem.StructureTemplate$Palette"),
     WORLD_OPEN_FLOWS("net.minecraft.client.gui.screens.worldselection.WorldOpenFlows"),
-    WORLD_TYPE_ENTRY("net.minecraft.client.gui.screens.worldselection.WorldCreationUiState$WorldTypeEntry");
+    WORLD_TYPE_ENTRY("net.minecraft.client.gui.screens.worldselection.WorldCreationUiState$WorldTypeEntry"),
+    PACK_REPOSITORY("net.minecraft.server.packs.repository.PackRepository");
 
     private final String className;
 
