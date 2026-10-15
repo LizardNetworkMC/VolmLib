@@ -112,11 +112,8 @@ public final class NativeNeoForgeLoader implements NativeModdedLoader {
 
     @Override
     public ModdedServerAccess serverAccess() {
-        return new ModdedServerLevels(this::invalidateLevelCache);
-    }
-
-    private void invalidateLevelCache(MinecraftServer server) {
-        server.markWorldsDirty();
+        return new ModdedServerLevels(server -> {
+        });
     }
 
     @Override
