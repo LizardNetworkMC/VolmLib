@@ -1,7 +1,5 @@
 package art.arcane.volmlib.util.plugin;
 
-import org.bukkit.Bukkit;
-
 import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
 
@@ -29,8 +27,7 @@ public final class SplashScreenSupport {
         return Integer.parseInt(version.substring(0, end));
     }
 
-    public static String serverVersionWithoutMcSuffix() {
-        String version = Bukkit.getVersion();
+    public static String serverVersionWithoutMcSuffix(String version) {
         int mcMarkerIndex = version.indexOf(" (MC:");
         if (mcMarkerIndex != -1) {
             version = version.substring(0, mcMarkerIndex);

@@ -41,6 +41,7 @@ sourceSets {
             include('art/arcane/volmlib/util/format/ColorFormatter.java')
             include('art/arcane/volmlib/util/io/AtomicFileIO.java')
             include('art/arcane/volmlib/util/plugin/ComponentText.java')
+            include('art/arcane/volmlib/util/plugin/SplashScreenSupport.java')
         }
         resources {
             srcDirs = []
