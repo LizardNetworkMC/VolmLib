@@ -1,0 +1,66 @@
+{
+  "global": [
+    {
+      "pattern": "\\bgetStructureTemplateManager\\(\\)",
+      "replacement": "getStructureManager()"
+    },
+    {
+      "pattern": "\\bAbstractSpreadingStructurePlacement\\b",
+      "replacement": "StructurePlacement"
+    },
+    {
+      "pattern": "\\.getOptional\\(LootContextParams\\.",
+      "replacement": ".getOptionalParameter(LootContextParams."
+    }
+  ],
+  "files": {
+    "modded/art/arcane/volmlib/nativelib/minecraft26_2/modded/NativeModdedStructureStage.java": [
+      {
+        "pattern": "startsForStructure\\(sectionPos\\.x\\(\\), sectionPos\\.z\\(\\), structure\\)",
+        "replacement": "startsForStructure(sectionPos, structure)"
+      }
+    ],
+    "modded/art/arcane/volmlib/nativelib/minecraft26_2/modded/NativeHarvestSession.java": [
+      {
+        "pattern": "onEquippedItemBroken\\(brokenItem, ",
+        "replacement": "onEquippedItemBroken(brokenItem.getItem(), "
+      }
+    ],
+    "art/arcane/volmlib/nativelib/minecraft26_2/modded/NativeSpawnedEntity.java": [
+      {
+        "pattern": "\\.setPermanentlyInvulnerable\\(",
+        "replacement": ".setInvulnerable("
+      },
+      {
+        "pattern": "\\.isPermanentlyInvulnerable\\(\\)",
+        "replacement": ".isInvulnerable()"
+      },
+      {
+        "pattern": "entity\\.getInvulnerableTime\\(\\)",
+        "replacement": "entity.invulnerableTime"
+      },
+      {
+        "pattern": "entity\\.setInvulnerableTime\\(([^;]*)\\);",
+        "replacement": "entity.invulnerableTime = $1;"
+      }
+    ],
+    "art/arcane/volmlib/nativelib/minecraft26_2/modded/NativeBlockProperties.java": [
+      {
+        "pattern": "\\.is\\(BlockTags\\.BLOCKS_MOTION\\)",
+        "replacement": ".blocksMotion()"
+      }
+    ],
+    "forge/art/arcane/volmlib/nativelib/minecraft26_2/forge/NativeForgeLoader.java": [
+      {
+        "pattern": "\\.putAttributes\\(original\\.attributes\\(\\)\\)",
+        "replacement": ".putAttributes(biome.getAttributes())\n                .mobSpawnSettings(original.mobSpawnSettings())"
+      }
+    ],
+    "neoforge/art/arcane/volmlib/nativelib/minecraft26_2/neoforge/NativeNeoForgeLoader.java": [
+      {
+        "pattern": "new ModdedServerLevels\\(server -> \\{\\s*\\}\\)",
+        "replacement": "new ModdedServerLevels(MinecraftServer::markWorldsDirty)"
+      }
+    ]
+  }
+}

@@ -1,0 +1,36 @@
+{
+  "global": [
+    {
+      "pattern": "\\bEntityTypes\\b",
+      "replacement": "EntityType"
+    },
+    {
+      "pattern": "\\bSpeleothemBlock\\b",
+      "replacement": "PointedDripstoneBlock"
+    },
+    {
+      "pattern": "\\bSpeleothemThickness\\b",
+      "replacement": "DripstoneThickness"
+    }
+  ],
+  "files": {
+    "modded/art/arcane/volmlib/nativelib/minecraft26_2/modded/mixin/MobAwarenessMixin.java": [
+      {
+        "pattern": "mob\\.getGoalSelector\\(\\)",
+        "replacement": "mob.goalSelector"
+      }
+    ],
+    "modded/art/arcane/volmlib/nativelib/minecraft26_2/client/mixin/NativeWorldOpenFlowsMixin.java": [
+      {
+        "pattern": "minecraft\\.gui\\.setScreen\\(",
+        "replacement": "minecraft.setScreen("
+      }
+    ],
+    "modded/art/arcane/volmlib/nativelib/minecraft26_2/client/NativeClientAccess.java": [
+      {
+        "pattern": "\\.gui\\.toastManager\\(\\)",
+        "replacement": ".getToastManager()"
+      }
+    ]
+  }
+}
