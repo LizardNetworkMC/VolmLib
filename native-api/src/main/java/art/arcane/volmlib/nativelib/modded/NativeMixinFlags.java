@@ -28,6 +28,7 @@ package art.arcane.volmlib.nativelib.modded;
  * boot; these are the runtime confirmation reported alongside it.
  */
 public final class NativeMixinFlags {
+    private static volatile boolean levelsReadyRan;
     private static volatile boolean entityPersistenceRan;
     private static volatile boolean registryClientNamesRan;
     private static volatile boolean livingEntityLootRan;
@@ -38,6 +39,12 @@ public final class NativeMixinFlags {
     private static volatile boolean packSelectionRan;
 
     private NativeMixinFlags() {
+    }
+
+    public static void markLevelsReady() {
+        if (!levelsReadyRan) {
+            levelsReadyRan = true;
+        }
     }
 
     // Read before write on every marker: the entity hooks run per entity save and per mob tick, and a
@@ -95,6 +102,10 @@ public final class NativeMixinFlags {
         return registryClientNamesRan;
     }
 
+    public static boolean levelsReadyRan() {
+        return levelsReadyRan;
+    }
+
     public static boolean entityPersistenceRan() {
         return entityPersistenceRan;
     }
@@ -124,6 +135,7 @@ public final class NativeMixinFlags {
     }
 
     public static void reset() {
+        levelsReadyRan = false;
         entityPersistenceRan = false;
         registryClientNamesRan = false;
         livingEntityLootRan = false;

@@ -3,6 +3,7 @@ package art.arcane.volmlib.nativelib.minecraft26_2.modded;
 import java.lang.reflect.Method;
 
 public enum NativeMixinTarget {
+    SERVER("net.minecraft.server.MinecraftServer"),
     ENTITY("net.minecraft.world.entity.Entity"),
     REGISTRY_PACKET("net.minecraft.network.protocol.configuration.ClientboundRegistryDataPacket"),
     LIVING_ENTITY("net.minecraft.world.entity.LivingEntity"),

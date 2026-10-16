@@ -1,6 +1,7 @@
 package art.arcane.volmlib.nativelib.minecraft26_2.modded;
 
 import net.minecraft.server.level.ServerLevel;
+import net.minecraft.world.level.chunk.ChunkGenerator;
 
 public final class NativeProtocolWorld {
     private final ServerLevel level;
@@ -28,7 +29,13 @@ public final class NativeProtocolWorld {
     }
 
     public <T> T generator(Class<T> type) {
-        return type.isInstance(level.getChunkSource().getGenerator())
-                ? type.cast(level.getChunkSource().getGenerator()) : null;
+        ChunkGenerator generator = level.getChunkSource().getGenerator();
+        if (type.isInstance(generator)) {
+            return type.cast(generator);
+        }
+        if (generator instanceof NativeGeneratorHandle nativeGenerator && type.isInstance(nativeGenerator.owner())) {
+            return type.cast(nativeGenerator.owner());
+        }
+        return null;
     }
 }

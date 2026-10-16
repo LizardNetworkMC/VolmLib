@@ -2,6 +2,8 @@ package art.arcane.volmlib.util.parallel;
 
 import org.junit.Test;
 
+import java.io.IOException;
+import java.io.InputStream;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.ForkJoinPool;
@@ -44,6 +46,69 @@ public class MultiBurstSupportTest {
         }
         assertTrue(burst.isTerminated());
         assertTrue(failures.isEmpty());
+    }
+
+    @Test
+    public void workersResolveOwnerClassesThroughTheirContextLoaderAfterReopen() throws Exception {
+        ClassLoader ownerLoader = new IsolatedBurstLoader();
+        Class<?> ownerType = ownerLoader.loadClass(IsolatedBurst.class.getName());
+        MultiBurstSupport burst = (MultiBurstSupport) ownerType.getConstructor().newInstance();
+        Thread caller = Thread.currentThread();
+        ClassLoader callerLoader = caller.getContextClassLoader();
+        caller.setContextClassLoader(ClassLoader.getPlatformClassLoader());
+        try {
+            for (int cycle = 0; cycle < 2; cycle++) {
+                Class<?> resolved = burst.submit(() -> Thread.currentThread().getContextClassLoader()
+                        .loadClass(ownerType.getName())).get(5, TimeUnit.SECONDS);
+                assertSame(ownerType, resolved);
+                assertSame(ClassLoader.getPlatformClassLoader(), caller.getContextClassLoader());
+                burst.close();
+                if (cycle == 0) {
+                    burst.reopen();
+                }
+            }
+        } finally {
+            caller.setContextClassLoader(callerLoader);
+            burst.close();
+        }
+    }
+
+    public static final class IsolatedBurst extends MultiBurstSupport {
+        public IsolatedBurst() {
+            super("isolated-burst", Thread.NORM_PRIORITY, () -> 2, count -> count,
+                    System::currentTimeMillis, null, null, null, 1_000L);
+        }
+    }
+
+    private static final class IsolatedBurstLoader extends ClassLoader {
+        private IsolatedBurstLoader() {
+            super(MultiBurstSupportTest.class.getClassLoader());
+        }
+
+        @Override
+        protected Class<?> loadClass(String name, boolean resolve) throws ClassNotFoundException {
+            if (!name.equals(IsolatedBurst.class.getName())) {
+                return super.loadClass(name, resolve);
+            }
+            synchronized (getClassLoadingLock(name)) {
+                Class<?> loaded = findLoadedClass(name);
+                if (loaded == null) {
+                    try (InputStream input = getParent().getResourceAsStream(name.replace('.', '/') + ".class")) {
+                        if (input == null) {
+                            throw new ClassNotFoundException(name);
+                        }
+                        byte[] bytes = input.readAllBytes();
+                        loaded = defineClass(name, bytes, 0, bytes.length);
+                    } catch (IOException failure) {
+                        throw new ClassNotFoundException(name, failure);
+                    }
+                }
+                if (resolve) {
+                    resolveClass(loaded);
+                }
+                return loaded;
+            }
+        }
     }
 
     private static final class RecordingBurst extends MultiBurstSupport {

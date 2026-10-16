@@ -98,6 +98,7 @@ public class MultiBurstSupport implements ExecutorService {
                 return service;
             }
 
+            ClassLoader ownerLoader = getClass().getClassLoader();
             service = createPool(threadCountResolver.applyAsInt(parallelism.getAsInt()),
                     new ForkJoinPool.ForkJoinWorkerThreadFactory() {
                         int m = 0;
@@ -107,6 +108,7 @@ public class MultiBurstSupport implements ExecutorService {
                             final ForkJoinWorkerThread worker = ForkJoinPool.defaultForkJoinWorkerThreadFactory.newThread(pool);
                             worker.setPriority(priority);
                             worker.setName(name + " " + ++m);
+                            worker.setContextClassLoader(ownerLoader);
                             return worker;
                         }
                     },

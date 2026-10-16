@@ -17,6 +17,7 @@ import java.util.function.Supplier;
 public record NativeModdedCallbacks(
         Consumer<NativeModdedServer> aboutToStart,
         Consumer<NativeModdedServer> start,
+        Consumer<NativeModdedServer> levelsReady,
         Consumer<NativeModdedServer> started,
         Runnable stop,
         Runnable stopped,

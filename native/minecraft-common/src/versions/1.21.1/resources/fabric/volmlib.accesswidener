@@ -1,0 +1,22 @@
+accessWidener v2 named
+accessible field net/minecraft/server/MinecraftServer levels Ljava/util/Map;
+accessible field net/minecraft/server/MinecraftServer executor Ljava/util/concurrent/Executor;
+accessible field net/minecraft/server/MinecraftServer storageSource Lnet/minecraft/world/level/storage/LevelStorageSource$LevelStorageAccess;
+accessible field net/minecraft/server/packs/repository/PackRepository sources Ljava/util/Set;
+mutable field net/minecraft/server/packs/repository/PackRepository sources Ljava/util/Set;
+accessible class net/minecraft/world/level/biome/Biome$ClimateSettings
+accessible field net/minecraft/world/level/biome/Biome climateSettings Lnet/minecraft/world/level/biome/Biome$ClimateSettings;
+accessible method net/minecraft/world/level/biome/Biome <init> (Lnet/minecraft/world/level/biome/Biome$ClimateSettings;Lnet/minecraft/world/level/biome/BiomeSpecialEffects;Lnet/minecraft/world/level/biome/BiomeGenerationSettings;Lnet/minecraft/world/level/biome/MobSpawnSettings;)V
+accessible field net/minecraft/world/level/biome/BiomeGenerationSettings carvers Ljava/util/Map;
+accessible method net/minecraft/world/level/biome/BiomeGenerationSettings <init> (Ljava/util/Map;Ljava/util/List;)V
+accessible field net/minecraft/world/level/levelgen/structure/structures/JigsawStructure startPool Lnet/minecraft/core/Holder;
+accessible field net/minecraft/world/level/levelgen/structure/structures/JigsawStructure poolAliases Ljava/util/List;
+accessible field net/minecraft/world/level/levelgen/structure/pools/StructureTemplatePool rawTemplates Ljava/util/List;
+accessible field net/minecraft/world/level/levelgen/structure/pools/SinglePoolElement template Lcom/mojang/datafixers/util/Either;
+accessible field net/minecraft/world/level/levelgen/structure/pools/ListPoolElement elements Ljava/util/List;
+accessible field net/minecraft/world/entity/Mob goalSelector Lnet/minecraft/world/entity/ai/goal/GoalSelector;
+accessible class net/minecraft/world/level/levelgen/structure/pools/alias/Direct
+accessible class net/minecraft/world/level/levelgen/structure/pools/alias/Random
+accessible class net/minecraft/world/level/levelgen/structure/pools/alias/RandomGroup
+accessible field net/minecraft/world/level/StructureManager level Lnet/minecraft/world/level/LevelAccessor;
+accessible method net/minecraft/server/level/ServerChunkCache getChunkFutureMainThread (IILnet/minecraft/world/level/chunk/status/ChunkStatus;Z)Ljava/util/concurrent/CompletableFuture;

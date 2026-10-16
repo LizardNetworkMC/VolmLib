@@ -1,0 +1,231 @@
+package art.arcane.volmlib.nativelib.minecraft26_2.terrain;
+
+import com.mojang.datafixers.util.Pair;
+import net.minecraft.core.BlockPos;
+import net.minecraft.core.Holder;
+import net.minecraft.core.Registry;
+import net.minecraft.core.RegistryAccess;
+import net.minecraft.core.registries.Registries;
+import net.minecraft.resources.ResourceLocation;
+import net.minecraft.resources.ResourceKey;
+import net.minecraft.world.level.block.Rotation;
+import net.minecraft.world.level.levelgen.structure.BoundingBox;
+import net.minecraft.world.level.levelgen.structure.pools.EmptyPoolElement;
+import net.minecraft.world.level.levelgen.structure.pools.FeaturePoolElement;
+import net.minecraft.world.level.levelgen.structure.pools.ListPoolElement;
+import net.minecraft.world.level.levelgen.structure.pools.SinglePoolElement;
+import net.minecraft.world.level.levelgen.structure.pools.StructurePoolElement;
+import net.minecraft.world.level.levelgen.structure.pools.StructureTemplatePool;
+import net.minecraft.world.level.levelgen.structure.pools.alias.Direct;
+import net.minecraft.world.level.levelgen.structure.pools.alias.PoolAliasBinding;
+import net.minecraft.world.level.levelgen.structure.pools.alias.RandomGroup;
+import net.minecraft.world.level.levelgen.structure.pools.alias.Random;
+import net.minecraft.world.level.levelgen.structure.structures.JigsawStructure;
+import net.minecraft.world.level.levelgen.structure.templatesystem.StructureTemplateManager;
+
+import java.util.Collections;
+import java.util.HashSet;
+import java.util.IdentityHashMap;
+import java.util.List;
+import java.util.Set;
+import java.util.function.Function;
+
+public final class NativeStructureTemplatePoolBounds {
+    private NativeStructureTemplatePoolBounds() {
+    }
+
+    public static int sourceHorizontalSpan(RegistryAccess registryAccess,
+                                           StructureTemplateManager templateManager,
+                                           JigsawStructure source) {
+        Registry<StructureTemplatePool> pools = registryAccess.registryOrThrow(Registries.TEMPLATE_POOL);
+        return sourceHorizontalSpan(
+                templateManager,
+                source.startPool,
+                source.poolAliases,
+                key -> pools.get(key.location()));
+    }
+
+    public static int horizontalSpan(RegistryAccess registryAccess,
+                                     StructureTemplateManager templateManager,
+                                     String templatePoolKey) {
+        ResourceLocation identifier = ResourceLocation.tryParse(templatePoolKey);
+        if (identifier == null) {
+            throw new IllegalArgumentException("Invalid registered template pool key: " + templatePoolKey);
+        }
+        Registry<StructureTemplatePool> pools = registryAccess.registryOrThrow(Registries.TEMPLATE_POOL);
+        StructureTemplatePool pool = pools.get(identifier);
+        if (pool == null) {
+            throw new IllegalArgumentException("Registered template pool does not exist: " + templatePoolKey);
+        }
+        return horizontalSpan(pool, templateManager);
+    }
+
+    public static int horizontalSpan(RegistryAccess registryAccess,
+                                     StructureTemplateManager templateManager,
+                                     JigsawStructure source,
+                                     String templatePoolKey) {
+        ResourceLocation identifier = ResourceLocation.tryParse(templatePoolKey);
+        if (identifier == null) {
+            throw new IllegalArgumentException("Invalid registered template pool key: " + templatePoolKey);
+        }
+        Registry<StructureTemplatePool> pools = registryAccess.registryOrThrow(Registries.TEMPLATE_POOL);
+        ResourceKey<StructureTemplatePool> startPoolKey = ResourceKey.create(
+                Registries.TEMPLATE_POOL, identifier);
+        StructureTemplatePool startPool = pools.get(identifier);
+        if (startPool == null) {
+            throw new IllegalArgumentException("Registered template pool does not exist: " + templatePoolKey);
+        }
+        return sourceHorizontalSpan(
+                templateManager,
+                startPool,
+                startPoolKey,
+                source.poolAliases,
+                key -> pools.get(key.location()));
+    }
+
+    public static int sourceHorizontalSpan(StructureTemplateManager templateManager,
+                                    Holder<StructureTemplatePool> startPool,
+                                    List<PoolAliasBinding> aliases,
+                                    Function<ResourceKey<StructureTemplatePool>, StructureTemplatePool> poolLookup) {
+        return sourceHorizontalSpan(templateManager, startPool.value(),
+                startPool.unwrapKey().orElse(null), aliases, poolLookup);
+    }
+
+    public static int sourceHorizontalSpan(StructureTemplateManager templateManager,
+                                    StructureTemplatePool startPool,
+                                    ResourceKey<StructureTemplatePool> startPoolKey,
+                                    List<PoolAliasBinding> aliases,
+                                    Function<ResourceKey<StructureTemplatePool>, StructureTemplatePool> poolLookup) {
+        int maximumSpan = directHorizontalSpan(startPool, templateManager);
+        if (startPoolKey == null) {
+            return maximumSpan;
+        }
+        Set<ResourceKey<StructureTemplatePool>> targets = new HashSet<>();
+        for (PoolAliasBinding binding : aliases) {
+            collectTargets(binding, startPoolKey, targets);
+        }
+        for (ResourceKey<StructureTemplatePool> target : targets) {
+            StructureTemplatePool targetPool = poolLookup.apply(target);
+            if (targetPool == null) {
+                throw new IllegalStateException("Jigsaw start-pool alias target does not exist: "
+                        + target.location());
+            }
+            maximumSpan = Math.max(maximumSpan, directHorizontalSpan(targetPool, templateManager));
+        }
+        return maximumSpan;
+    }
+
+    private static void collectTargets(PoolAliasBinding binding,
+                                       ResourceKey<StructureTemplatePool> startPoolKey,
+                                       Set<ResourceKey<StructureTemplatePool>> targets) {
+        if (binding instanceof Direct direct) {
+            if (direct.alias().equals(startPoolKey)) {
+                targets.add(direct.target());
+            }
+            return;
+        }
+        if (binding instanceof Random random) {
+            if (random.alias().equals(startPoolKey)) {
+                random.targets().unwrap().forEach(entry -> targets.add(entry.data()));
+            }
+            return;
+        }
+        if (binding instanceof RandomGroup group) {
+            group.groups().unwrap().forEach(entry -> entry.data().forEach(
+                    nested -> collectTargets(nested, startPoolKey, targets)));
+            return;
+        }
+        throw new IllegalStateException("Unsupported jigsaw pool alias type: "
+                + binding.getClass().getName());
+    }
+
+    public static int horizontalSpan(StructureTemplatePool pool,
+                              StructureTemplateManager templateManager) {
+        Set<StructureTemplatePool> visited = Collections.newSetFromMap(new IdentityHashMap<>());
+        return horizontalSpan(pool, templateManager, visited);
+    }
+
+    private static int horizontalSpan(StructureTemplatePool pool,
+                                      StructureTemplateManager templateManager,
+                                      Set<StructureTemplatePool> visited) {
+        if (!visited.add(pool)) {
+            return 0;
+        }
+        int maximumSpan = directHorizontalSpan(pool, templateManager);
+        Holder<StructureTemplatePool> fallback = pool.getFallback();
+        if (fallback == null || !fallback.isBound()) {
+            throw new IllegalStateException("Template pool has an unresolved fallback");
+        }
+        return Math.max(maximumSpan, horizontalSpan(fallback.value(), templateManager, visited));
+    }
+
+    private static int directHorizontalSpan(StructureTemplatePool pool,
+                                            StructureTemplateManager templateManager) {
+        int maximumSpan = 0;
+        for (Pair<StructurePoolElement, Integer> entry : pool.rawTemplates) {
+            StructurePoolElement element = entry.getFirst();
+            validateElement(element, templateManager);
+            maximumSpan = Math.max(maximumSpan, horizontalSpan(element, templateManager));
+        }
+        return maximumSpan;
+    }
+
+    private static void validateElement(StructurePoolElement element,
+                                        StructureTemplateManager templateManager) {
+        if (element == EmptyPoolElement.INSTANCE || element instanceof FeaturePoolElement) {
+            return;
+        }
+        if (element instanceof SinglePoolElement single) {
+            ResourceLocation template;
+            try {
+                template = single.template.left().orElse(null);
+                if (template == null) {
+                    return;
+                }
+            } catch (RuntimeException inlineTemplate) {
+                return;
+            }
+            if (templateManager.get(template).isEmpty()) {
+                throw new IllegalStateException("Template pool element does not resolve a structure template: "
+                        + template);
+            }
+            return;
+        }
+        if (element instanceof ListPoolElement list) {
+            for (StructurePoolElement child : list.elements) {
+                validateElement(child, templateManager);
+            }
+            return;
+        }
+    }
+
+    private static int horizontalSpan(StructurePoolElement element,
+                                      StructureTemplateManager templateManager) {
+        if (element == EmptyPoolElement.INSTANCE) {
+            return 0;
+        }
+        long maximumSpan = 0L;
+        for (Rotation rotation : Rotation.values()) {
+            BoundingBox box;
+            try {
+                box = element.getBoundingBox(templateManager, BlockPos.ZERO, rotation);
+            } catch (RuntimeException | LinkageError error) {
+                throw new IllegalStateException("Template pool element "
+                        + element.getClass().getName()
+                        + " could not provide bounded geometry for rotation " + rotation, error);
+            }
+            if (box == null) {
+                throw new IllegalStateException("Template pool element "
+                        + element.getClass().getName()
+                        + " returned no bounded geometry for rotation " + rotation);
+            }
+            long xSpan = (long) box.maxX() - box.minX() + 1L;
+            long zSpan = (long) box.maxZ() - box.minZ() + 1L;
+            maximumSpan = Math.max(maximumSpan, Math.max(xSpan, zSpan));
+        }
+        if (maximumSpan < 0L || maximumSpan > Integer.MAX_VALUE) {
+            throw new IllegalStateException("Template pool element has an unbounded horizontal span");
+        }
+        return (int) maximumSpan;
+    }
+}

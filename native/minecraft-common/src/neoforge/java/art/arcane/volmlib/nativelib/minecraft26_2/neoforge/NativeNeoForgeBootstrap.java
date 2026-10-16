@@ -25,7 +25,6 @@ import net.neoforged.neoforge.event.level.LevelEvent;
 import net.neoforged.neoforge.event.level.block.BreakBlockEvent;
 import net.neoforged.neoforge.event.server.ServerAboutToStartEvent;
 import net.neoforged.neoforge.event.server.ServerStartedEvent;
-import net.neoforged.neoforge.event.server.ServerStartingEvent;
 import net.neoforged.neoforge.event.server.ServerStoppedEvent;
 import net.neoforged.neoforge.event.server.ServerStoppingEvent;
 import net.neoforged.neoforge.event.tick.ServerTickEvent;
@@ -33,6 +32,7 @@ import net.neoforged.neoforge.registries.DeferredRegister;
 import net.neoforged.neoforge.server.permission.events.PermissionGatherEvent;
 import java.util.List;
 import art.arcane.volmlib.nativelib.minecraft26_2.modded.NativeModdedCallbacks;
+import art.arcane.volmlib.nativelib.minecraft26_2.modded.NativeModdedLifecycle;
 import art.arcane.volmlib.nativelib.minecraft26_2.modded.NativeCommandRegistration;
 import art.arcane.volmlib.nativelib.minecraft26_2.modded.NativeBlockDropHooks;
 import art.arcane.volmlib.nativelib.minecraft26_2.modded.NativeChunkGeneratorDefinition;
@@ -48,13 +48,17 @@ public final class NativeNeoForgeBootstrap {
     }
 
     public static void install(IEventBus modBus, NativeNeoForgeLoader loader, NativeModdedCallbacks callbacks) {
+        NativeModdedLifecycle.bind(callbacks.levelsReady());
         modBus.addListener((AddPackFindersEvent event) -> {
             if (event.getPackType() == PackType.SERVER_DATA) {
                 event.addRepositorySource(callbacks.datapack().get());
             }
         });
-        NeoForge.EVENT_BUS.addListener((ServerAboutToStartEvent event) -> callbacks.aboutToStart().accept(NativeModdedServer.fromHandle(event.getServer())));
-        NeoForge.EVENT_BUS.addListener((ServerStartingEvent event) -> callbacks.start().accept(NativeModdedServer.fromHandle(event.getServer())));
+        NeoForge.EVENT_BUS.addListener((ServerAboutToStartEvent event) -> {
+            NativeModdedServer server = NativeModdedServer.fromHandle(event.getServer());
+            callbacks.aboutToStart().accept(server);
+            callbacks.start().accept(server);
+        });
         NeoForge.EVENT_BUS.addListener((ServerStartedEvent event) -> callbacks.started().accept(NativeModdedServer.fromHandle(event.getServer())));
         NeoForge.EVENT_BUS.addListener((ServerStoppingEvent event) -> callbacks.stop().run());
         NeoForge.EVENT_BUS.addListener((ServerStoppedEvent event) -> callbacks.stopped().run());
