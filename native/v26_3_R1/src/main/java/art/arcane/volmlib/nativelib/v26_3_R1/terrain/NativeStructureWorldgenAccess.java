@@ -1,6 +1,8 @@
 package art.arcane.volmlib.nativelib.v26_3_R1.terrain;
 
 
+import art.arcane.volmlib.nativelib.terrain.NativeBlockChangeRecorder;
+import art.arcane.volmlib.nativelib.terrain.NativeBlockChangeSet;
 import it.unimi.dsi.fastutil.longs.Long2LongOpenHashMap;
 import it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap;
 import net.minecraft.core.BlockPos;
@@ -23,6 +25,7 @@ import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.flag.FeatureFlagSet;
 import net.minecraft.world.level.BlockGetter;
 import net.minecraft.world.level.ChunkPos;
+import net.minecraft.world.level.LevelHeightAccessor;
 import net.minecraft.world.level.LightLayer;
 import net.minecraft.world.level.WorldGenLevel;
 import net.minecraft.world.level.biome.Biome;
@@ -58,7 +61,7 @@ import java.util.function.IntBinaryOperator;
 import java.util.function.Predicate;
 import java.util.function.Supplier;
 
-public final class NativeStructureWorldgenAccess implements WorldGenLevel {
+public final class NativeStructureWorldgenAccess implements WorldGenLevel, NativeBlockChangeRecorder {
     private static final int WRITE_RADIUS = 1;
     private static final NativeStructurePoiUpdates POI_UPDATES = NativeStructurePoiUpdates.create();
 
@@ -75,6 +78,7 @@ public final class NativeStructureWorldgenAccess implements WorldGenLevel {
     private final LevelTickAccess<Fluid> fluidTicks;
     private final Long2LongOpenHashMap terrainHeights;
     private final Long2ObjectOpenHashMap<ChunkAccess> outsideChunks;
+    private final NativeBlockChangeSet blockChanges;
 
     private NativeStructureWorldgenAccess(WorldGenLevel delegate, Boundary boundary) {
         this.delegate = Objects.requireNonNull(delegate, "Native structure world access requires a delegate");
@@ -102,15 +106,26 @@ public final class NativeStructureWorldgenAccess implements WorldGenLevel {
         this.terrainHeights = new Long2LongOpenHashMap();
         this.terrainHeights.defaultReturnValue(Long.MIN_VALUE);
         this.outsideChunks = new Long2ObjectOpenHashMap<>();
+        this.blockChanges = Objects.requireNonNull(
+                boundary.blockChanges(), "World access requires a block change set");
     }
 
     public static NativeStructureWorldgenAccess create(WorldGenLevel delegate, ChunkPos generationCenter,
                                                 IntBinaryOperator surfaceFirstFreeY,
                                                 IntBinaryOperator floorFirstFreeY,
                                                 boolean virtualizeHeights,
-                                                Predicate<BlockPos> protectedPosition) {
+                                                Predicate<BlockPos> protectedPosition,
+                                                NativeBlockChangeSet blockChanges) {
         return new NativeStructureWorldgenAccess(delegate, new Boundary(
-                generationCenter, surfaceFirstFreeY, floorFirstFreeY, virtualizeHeights, protectedPosition));
+                generationCenter, surfaceFirstFreeY, floorFirstFreeY, virtualizeHeights, protectedPosition,
+                blockChanges));
+    }
+
+    public static NativeBlockChangeSet.Bounds changeBounds(LevelHeightAccessor level, ChunkPos generationCenter) {
+        return new NativeBlockChangeSet.Bounds(
+                generationCenter.x() - WRITE_RADIUS, generationCenter.z() - WRITE_RADIUS,
+                generationCenter.x() + WRITE_RADIUS, generationCenter.z() + WRITE_RADIUS,
+                level.getMinY(), level.getHeight());
     }
 
     @Override
@@ -433,8 +448,10 @@ public final class NativeStructureWorldgenAccess implements WorldGenLevel {
 
     @Override
     public boolean setBlock(BlockPos position, BlockState state, int updateFlags, int updateLimit) {
-        return isWritable(position)
-                && (POI_UPDATES != null
+        if (!isWritable(position)) {
+            return false;
+        }
+        return recordWrite(position, POI_UPDATES != null
                 ? POI_UPDATES.setBlock(delegate, position, state, updateFlags, updateLimit)
                 : delegate.setBlock(position, state, updateFlags, updateLimit));
     }
@@ -446,7 +463,7 @@ public final class NativeStructureWorldgenAccess implements WorldGenLevel {
         }
         return POI_UPDATES != null && delegate instanceof WorldGenRegion
                 ? setBlock(position, Blocks.AIR.defaultBlockState(), Block.UPDATE_ALL, Block.UPDATE_LIMIT)
-                : delegate.removeBlock(position, move);
+                : recordWrite(position, delegate.removeBlock(position, move));
     }
 
     @Override
@@ -457,7 +474,7 @@ public final class NativeStructureWorldgenAccess implements WorldGenLevel {
         return POI_UPDATES != null && delegate instanceof WorldGenRegion
                 ? !delegate.getBlockState(position).isAir()
                 && setBlock(position, Blocks.AIR.defaultBlockState(), Block.UPDATE_ALL, updateLimit)
-                : delegate.destroyBlock(position, drop, source, updateLimit);
+                : recordWrite(position, delegate.destroyBlock(position, drop, source, updateLimit));
     }
 
     @Override
@@ -468,6 +485,20 @@ public final class NativeStructureWorldgenAccess implements WorldGenLevel {
     @Override
     public boolean addFreshEntity(Entity entity, CreatureSpawnEvent.SpawnReason reason) {
         return isWritable(entity.blockPosition()) && delegate.addFreshEntity(entity, reason);
+    }
+
+    @Override
+    public void recordBlockChange(int x, int y, int z) {
+        if (isWritable(new BlockPos(x, y, z))) {
+            blockChanges.add(x, y, z);
+        }
+    }
+
+    private boolean recordWrite(BlockPos position, boolean written) {
+        if (written) {
+            blockChanges.add(position.getX(), position.getY(), position.getZ());
+        }
+        return written;
     }
 
     private boolean isReadable(BlockPos position) {
@@ -569,7 +600,8 @@ public final class NativeStructureWorldgenAccess implements WorldGenLevel {
                             IntBinaryOperator surfaceFirstFreeY,
                             IntBinaryOperator floorFirstFreeY,
                             boolean virtualizeHeights,
-                            Predicate<BlockPos> protectedPosition) {
+                            Predicate<BlockPos> protectedPosition,
+                            NativeBlockChangeSet blockChanges) {
     }
 
     private static final class BoundedTickAccess<T> implements LevelTickAccess<T> {

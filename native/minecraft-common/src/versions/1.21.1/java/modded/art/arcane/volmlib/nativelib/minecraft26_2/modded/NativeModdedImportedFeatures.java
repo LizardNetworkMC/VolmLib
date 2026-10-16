@@ -55,6 +55,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.function.IntBinaryOperator;
 
+import art.arcane.volmlib.nativelib.terrain.NativeBlockChangeSet;
 import art.arcane.volmlib.nativelib.terrain.feature.NativeFeatureTable;
 import art.arcane.volmlib.nativelib.terrain.feature.NativeImportedFeatureControl;
 import art.arcane.volmlib.nativelib.terrain.feature.NativeImportedFeaturePolicy;
@@ -238,7 +239,8 @@ public final class NativeModdedImportedFeatures {
                 : (x, z) -> level.getHeight(Heightmap.Types.OCEAN_FLOOR_WG, x, z);
         WorldGenLevel placementLevel = !placement.guarded() ? level : ModdedNativeStructureWorldgenAccess.create(
                 level, centerPos, surfaceFirstFreeY, floorFirstFreeY, placement.stacked(),
-                position -> placement.protectedPosition().test(position.getX(), position.getY(), position.getZ()));
+                position -> placement.protectedPosition().test(position.getX(), position.getY(), position.getZ()),
+                NativeBlockChangeSet.disabled());
 
 
         try {

@@ -1,6 +1,8 @@
 package art.arcane.volmlib.nativelib.minecraft26_2.modded;
 
 import art.arcane.volmlib.nativelib.minecraft26_2.terrain.WorldgenTerrainHeightmaps;
+import art.arcane.volmlib.nativelib.terrain.NativeBlockChangeRecorder;
+import art.arcane.volmlib.nativelib.terrain.NativeBlockChangeSet;
 import it.unimi.dsi.fastutil.longs.Long2LongOpenHashMap;
 import it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap;
 import net.minecraft.core.BlockPos;
@@ -22,6 +24,7 @@ import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.flag.FeatureFlagSet;
 import net.minecraft.world.level.BlockGetter;
 import net.minecraft.world.level.ChunkPos;
+import net.minecraft.world.level.LevelHeightAccessor;
 import net.minecraft.world.level.LightLayer;
 import net.minecraft.world.level.WorldGenLevel;
 import net.minecraft.world.level.biome.Biome;
@@ -56,7 +59,7 @@ import java.util.function.IntBinaryOperator;
 import java.util.function.Predicate;
 import java.util.function.Supplier;
 
-public final class ModdedNativeStructureWorldgenAccess implements WorldGenLevel {
+public final class ModdedNativeStructureWorldgenAccess implements WorldGenLevel, NativeBlockChangeRecorder {
     private static final int WRITE_RADIUS = 1;
 
     private final WorldGenLevel delegate;
@@ -72,6 +75,7 @@ public final class ModdedNativeStructureWorldgenAccess implements WorldGenLevel 
     private final LevelTickAccess<Fluid> fluidTicks;
     private final Long2LongOpenHashMap terrainHeights;
     private final Long2ObjectOpenHashMap<ChunkAccess> outsideChunks;
+    private final NativeBlockChangeSet blockChanges;
 
     private ModdedNativeStructureWorldgenAccess(WorldGenLevel delegate, Boundary boundary) {
         this.delegate = Objects.requireNonNull(delegate, "Native structure world access requires a delegate");
@@ -99,15 +103,26 @@ public final class ModdedNativeStructureWorldgenAccess implements WorldGenLevel 
         this.terrainHeights = new Long2LongOpenHashMap();
         this.terrainHeights.defaultReturnValue(Long.MIN_VALUE);
         this.outsideChunks = new Long2ObjectOpenHashMap<>();
+        this.blockChanges = Objects.requireNonNull(
+                boundary.blockChanges(), "World access requires a block change set");
     }
 
     public static ModdedNativeStructureWorldgenAccess create(WorldGenLevel delegate, ChunkPos generationCenter,
                                                 IntBinaryOperator surfaceFirstFreeY,
                                                 IntBinaryOperator floorFirstFreeY,
                                                 boolean virtualizeHeights,
-                                                Predicate<BlockPos> protectedPosition) {
+                                                Predicate<BlockPos> protectedPosition,
+                                                NativeBlockChangeSet blockChanges) {
         return new ModdedNativeStructureWorldgenAccess(delegate, new Boundary(
-                generationCenter, surfaceFirstFreeY, floorFirstFreeY, virtualizeHeights, protectedPosition));
+                generationCenter, surfaceFirstFreeY, floorFirstFreeY, virtualizeHeights, protectedPosition,
+                blockChanges));
+    }
+
+    public static NativeBlockChangeSet.Bounds changeBounds(LevelHeightAccessor level, ChunkPos generationCenter) {
+        return new NativeBlockChangeSet.Bounds(
+                generationCenter.x() - WRITE_RADIUS, generationCenter.z() - WRITE_RADIUS,
+                generationCenter.x() + WRITE_RADIUS, generationCenter.z() + WRITE_RADIUS,
+                level.getMinY(), level.getHeight());
     }
 
     @Override
@@ -412,17 +427,20 @@ public final class ModdedNativeStructureWorldgenAccess implements WorldGenLevel 
 
     @Override
     public boolean setBlock(BlockPos position, BlockState state, int updateFlags, int updateLimit) {
-        return isWritable(position) && delegate.setBlock(position, state, updateFlags, updateLimit);
+        return isWritable(position)
+                && recordWrite(position, delegate.setBlock(position, state, updateFlags, updateLimit));
     }
 
     @Override
     public boolean removeBlock(BlockPos position, boolean move) {
-        return isWritable(position) && delegate.removeBlock(position, move);
+        return isWritable(position)
+                && recordWrite(position, delegate.removeBlock(position, move));
     }
 
     @Override
     public boolean destroyBlock(BlockPos position, boolean drop, Entity source, int updateLimit) {
-        return isWritable(position) && delegate.destroyBlock(position, drop, source, updateLimit);
+        return isWritable(position)
+                && recordWrite(position, delegate.destroyBlock(position, drop, source, updateLimit));
     }
 
     @Override
@@ -430,6 +448,19 @@ public final class ModdedNativeStructureWorldgenAccess implements WorldGenLevel 
         return isWritable(entity.blockPosition()) && delegate.addFreshEntity(entity);
     }
 
+    @Override
+    public void recordBlockChange(int x, int y, int z) {
+        if (isWritable(new BlockPos(x, y, z))) {
+            blockChanges.add(x, y, z);
+        }
+    }
+
+    private boolean recordWrite(BlockPos position, boolean written) {
+        if (written) {
+            blockChanges.add(position.getX(), position.getY(), position.getZ());
+        }
+        return written;
+    }
 
     private boolean isReadable(BlockPos position) {
         return isInsideGenerationRegion(position.getX() >> 4, position.getZ() >> 4)
@@ -530,7 +561,8 @@ public final class ModdedNativeStructureWorldgenAccess implements WorldGenLevel 
                             IntBinaryOperator surfaceFirstFreeY,
                             IntBinaryOperator floorFirstFreeY,
                             boolean virtualizeHeights,
-                            Predicate<BlockPos> protectedPosition) {
+                            Predicate<BlockPos> protectedPosition,
+                            NativeBlockChangeSet blockChanges) {
     }
 
     private static final class BoundedTickAccess<T> implements LevelTickAccess<T> {

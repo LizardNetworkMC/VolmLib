@@ -40,6 +40,7 @@ import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.IntBinaryOperator;
 import java.util.Objects;
+import art.arcane.volmlib.nativelib.terrain.NativeBlockChangeSet;
 import art.arcane.volmlib.nativelib.terrain.feature.NativeImportedFeatureControl;
 import art.arcane.volmlib.nativelib.terrain.feature.NativeImportedFeaturePolicy;
 
@@ -309,7 +310,8 @@ public final class NativeImportedFeatureStage<D> {
                 : (x, z) -> level.getHeight(Heightmap.Types.OCEAN_FLOOR_WG, x, z);
         WorldGenLevel placementLevel = !placement.guarded() ? level : NativeStructureWorldgenAccess.create(
                 level, centerPos, surfaceFirstFreeY, floorFirstFreeY, placement.stacked(),
-                position -> placement.protectedPosition().test(position.getX(), position.getY(), position.getZ()));
+                position -> placement.protectedPosition().test(position.getX(), position.getY(), position.getZ()),
+                NativeBlockChangeSet.disabled());
 
         try {
             for (int stepIndex = 0; stepIndex < steps.size(); stepIndex++) {
