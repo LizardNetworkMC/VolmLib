@@ -5,6 +5,8 @@ import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
 import java.lang.annotation.Target;
 import java.lang.annotation.ElementType;
+import java.lang.reflect.Field;
+import java.lang.reflect.Modifier;
 import it.unimi.dsi.fastutil.shorts.ShortList;
 import net.bytebuddy.ByteBuddy;
 import net.bytebuddy.asm.Advice;
@@ -52,12 +54,39 @@ public final class NativeGenerationHooks {
             if (!allowed) {
                 return;
             }
-            ChunkGenerator generator = region.getLevel().getChunkSource().getGenerator();
+            Object generator = region.getLevel().getChunkSource().getGenerator();
+            if (!generator.getClass().getName().equals(generatorClassName)
+                    && generator.getClass().getClassLoader() == ChunkGenerator.class.getClassLoader()) {
+                return;
+            }
+            int chunkX = position.getX() >> 4;
+            int chunkZ = position.getZ() >> 4;
+            if (!region.getChunk(chunkX, chunkZ).getPersistedStatus().isOrAfter(ChunkStatus.FULL)) {
+                return;
+            }
+            for (int depth = 0; depth < 8 && generator != null
+                    && !generator.getClass().getName().equals(generatorClassName); depth++) {
+                Object next = null;
+                for (Class<?> type = generator.getClass(); next == null && type != null
+                        && type != ChunkGenerator.class; type = type.getSuperclass()) {
+                    for (Field field : type.getDeclaredFields()) {
+                        if (next == null && !Modifier.isStatic(field.getModifiers())
+                                && ChunkGenerator.class.isAssignableFrom(field.getType())
+                                && field.trySetAccessible()) {
+                            try {
+                                next = field.get(generator);
+                            } catch (IllegalAccessException e) {
+                                throw new IllegalStateException("Could not read chunk generator link "
+                                        + type.getName() + "." + field.getName(), e);
+                            }
+                        }
+                    }
+                }
+                generator = next;
+            }
             if (generator instanceof LongPredicate predicate
-                    && generator.getClass().getName().equals(generatorClassName)
-                    && region.getChunk(position.getX() >> 4, position.getZ() >> 4)
-                    .getPersistedStatus().isOrAfter(ChunkStatus.FULL)) {
-                allowed = predicate.test(ChunkPos.pack(position.getX() >> 4, position.getZ() >> 4));
+                    && generator.getClass().getName().equals(generatorClassName)) {
+                allowed = predicate.test(ChunkPos.pack(chunkX, chunkZ));
             }
         }
     }

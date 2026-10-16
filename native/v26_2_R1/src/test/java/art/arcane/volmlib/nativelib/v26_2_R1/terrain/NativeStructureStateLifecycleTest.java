@@ -3,6 +3,10 @@ package art.arcane.volmlib.nativelib.v26_2_R1.terrain;
 import art.arcane.volmlib.nativelib.terrain.NativeStructureBootstrapPolicy;
 import net.minecraft.SharedConstants;
 import net.minecraft.server.Bootstrap;
+import net.minecraft.server.level.ChunkMap;
+import net.minecraft.server.level.ServerChunkCache;
+import net.minecraft.server.level.ServerLevel;
+import net.minecraft.world.level.chunk.ChunkGenerator;
 import net.minecraft.world.level.chunk.ChunkGeneratorStructureState;
 import org.junit.BeforeClass;
 import org.junit.Test;
@@ -20,6 +24,7 @@ import static org.junit.Assert.assertThrows;
 import static org.junit.Assert.assertTrue;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 
 public class NativeStructureStateLifecycleTest {
     @BeforeClass
@@ -65,6 +70,57 @@ public class NativeStructureStateLifecycleTest {
         Throwable publication = assertThrows(CompletionException.class, completion::join).getCause();
         assertSame(failure, publication.getCause());
         assertSame(publication, fixture.failure.get());
+    }
+
+    @Test
+    public void retainStateAcceptsNativeGeneratorBehindWrapper() throws Exception {
+        ChunkGenerator nativeGenerator = mock(ChunkGenerator.class);
+        OwnerRuntime runtime = new OwnerRuntime(nativeGenerator, wrap(nativeGenerator));
+        ChunkGeneratorStructureState state = mock(ChunkGeneratorStructureState.class);
+        runtime.lifecycle.retainState(runtime.level, runtime.chunkMap, state);
+        when(runtime.chunkSource.getGeneratorState()).thenReturn(state);
+        assertSame(state, runtime.lifecycle.retainedState(runtime.level, runtime.chunkMap).structureState());
+    }
+
+    @Test
+    public void retainStateRejectsForeignActiveGenerator() throws Exception {
+        OwnerRuntime runtime = new OwnerRuntime(mock(ChunkGenerator.class), wrap(mock(ChunkGenerator.class)));
+        assertThrows(IllegalStateException.class, () -> runtime.lifecycle.retainState(
+                runtime.level, runtime.chunkMap, mock(ChunkGeneratorStructureState.class)));
+    }
+
+    private static TargetWrapper wrap(ChunkGenerator target) throws ReflectiveOperationException {
+        TargetWrapper wrapper = mock(TargetWrapper.class);
+        Field field = TargetWrapper.class.getDeclaredField("target");
+        field.setAccessible(true);
+        field.set(wrapper, target);
+        return wrapper;
+    }
+
+    private static final class OwnerRuntime {
+        private final ServerLevel level = mock(ServerLevel.class);
+        private final ServerChunkCache chunkSource = mock(ServerChunkCache.class);
+        private final ChunkMap chunkMap = mock(ChunkMap.class);
+        private final NativeStructureStateLifecycle lifecycle;
+
+        private OwnerRuntime(ChunkGenerator nativeGenerator, ChunkGenerator activeGenerator) throws ReflectiveOperationException {
+            Field chunkMapField = ServerChunkCache.class.getDeclaredField("chunkMap");
+            chunkMapField.setAccessible(true);
+            chunkMapField.set(chunkSource, chunkMap);
+            when(level.getChunkSource()).thenReturn(chunkSource);
+            when(chunkSource.getGenerator()).thenReturn(activeGenerator);
+            lifecycle = new NativeStructureStateLifecycle(new NativeStructureStateLifecycle.Configuration(
+                    level, nativeGenerator, mock(NativeStructureBootstrapPolicy.class)));
+        }
+    }
+
+    abstract static class TargetWrapper extends ChunkGenerator {
+        private final ChunkGenerator target;
+
+        protected TargetWrapper(ChunkGenerator target) {
+            super(null);
+            this.target = target;
+        }
     }
 
     private static final class Fixture implements NativeStructureBootstrapPolicy {

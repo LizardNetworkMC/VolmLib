@@ -1,5 +1,6 @@
 package art.arcane.volmlib.nativelib.v26_2_R1.terrain;
 
+import art.arcane.volmlib.nativelib.common.terrain.NativeGeneratorChain;
 import art.arcane.volmlib.nativelib.terrain.NativeBukkitGeneratorContext;
 import art.arcane.volmlib.nativelib.terrain.NativeBiomeSourcePolicy;
 import art.arcane.volmlib.nativelib.terrain.NativeBiomeRegistry;
@@ -158,6 +159,7 @@ public class NativeChunkGenerator<C, D, P extends StructureStartPlan, O extends 
     private final NativeTerrainPipeline<R> terrainPipeline;
     private final NativeStructureStateLifecycle structureStateLifecycle;
     private final NativeBukkitStructureStage<C, D, P, O> nativeStructures;
+    private volatile ChunkGenerator verifiedActiveGenerator;
 
     public NativeChunkGenerator(Configuration<C, D, P, O, R> configuration) {
         this(configuration, createBiomeRuntime(configuration.context()));
@@ -218,7 +220,7 @@ public class NativeChunkGenerator<C, D, P extends StructureStartPlan, O extends 
         if (!level.structureManager().shouldGenerateStructures() || !context.generateStructures()) {
             return null;
         }
-        if (level != runtimeLevel || level.getChunkSource().getGenerator() != this) {
+        if (level != runtimeLevel || !ownsGeneration(level)) {
             return null;
         }
         if (PAPER_STRUCTURE_LOCATE_EVENT) {
@@ -283,7 +285,7 @@ public class NativeChunkGenerator<C, D, P extends StructureStartPlan, O extends 
         if (!structureManager.shouldGenerateStructures() || !context.generateStructures()) {
             return;
         }
-        if (runtimeLevel.getChunkSource().getGenerator() != this
+        if (!ownsGeneration(runtimeLevel)
                 || runtimeLevel.getChunkSource().getGeneratorState() != structureState) {
             return;
         }
@@ -337,7 +339,7 @@ public class NativeChunkGenerator<C, D, P extends StructureStartPlan, O extends 
         if (!structuremanager.shouldGenerateStructures() || !context.generateStructures()) {
             return;
         }
-        if (runtimeLevel.getChunkSource().getGenerator() != this) {
+        if (!ownsGeneration(runtimeLevel)) {
             return;
         }
         ChunkPos chunkPos = ichunkaccess.getPos();
@@ -570,6 +572,18 @@ public class NativeChunkGenerator<C, D, P extends StructureStartPlan, O extends 
     public boolean test(long packedChunk) {
         return context.active()
                 && context.allowsChunkWrite(ChunkPos.getX(packedChunk), ChunkPos.getZ(packedChunk));
+    }
+
+    private boolean ownsGeneration(ServerLevel level) {
+        ChunkGenerator active = level.getChunkSource().getGenerator();
+        if (active == this || active == verifiedActiveGenerator) {
+            return true;
+        }
+        if (!NativeGeneratorChain.contains(active, this)) {
+            return false;
+        }
+        verifiedActiveGenerator = active;
+        return true;
     }
 
     private boolean allowsRoutedDiscreteGeneration(ChunkAccess chunk, ChunkStatus stage) {

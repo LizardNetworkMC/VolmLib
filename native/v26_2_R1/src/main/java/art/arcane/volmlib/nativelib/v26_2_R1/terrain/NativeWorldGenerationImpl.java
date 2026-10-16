@@ -152,6 +152,7 @@ import java.util.concurrent.Executor;
 import java.util.concurrent.atomic.AtomicInteger;
 import net.minecraft.world.level.chunk.ChunkGenerator;
 import art.arcane.volmlib.nativelib.terrain.NativeWorldGeneration;
+import art.arcane.volmlib.nativelib.common.terrain.NativeGeneratorChain;
 import art.arcane.volmlib.nativelib.terrain.NativeBukkitGeneratorContext;
 import art.arcane.volmlib.nativelib.terrain.NativeGenerationRoute;
 import art.arcane.volmlib.nativelib.terrain.NativeWorldLifecyclePolicy;
@@ -190,7 +191,7 @@ public final class NativeWorldGenerationImpl implements NativeWorldGeneration {
         ServerLevel level = ((CraftWorld) world).getHandle();
         ChunkMap chunkMap = level.getChunkSource().chunkMap;
         ChunkGeneratorStructureState currentState = level.getChunkSource().getGeneratorState();
-        ChunkGenerator generator = level.getChunkSource().getGenerator();
+        ChunkGenerator generator = structureGenerator(level);
         ChunkGeneratorStructureState scopedState = createStructureState(level, generator, currentState);
         Registry<StructureSet> structureSetRegistry =
                 level.registryAccess().lookupOrThrow(Registries.STRUCTURE_SET);
@@ -246,7 +247,7 @@ public final class NativeWorldGenerationImpl implements NativeWorldGeneration {
     public CompletableFuture<Void> completeBootstrap(World world) throws NoSuchFieldException, IllegalAccessException {
         ServerLevel level = ((CraftWorld) world).getHandle();
         ChunkMap chunkMap = level.getChunkSource().chunkMap;
-        NativeChunkGenerator<?, ?, ?, ?, ?> generator = requireNativeGenerator(level.getChunkSource().getGenerator());
+        NativeChunkGenerator<?, ?, ?, ?, ?> generator = requireNativeGenerator(structureGenerator(level));
         NativeStructureStateLifecycle.RetainedState retained =
                 generator.structureStateLifecycle().retainedState(level, chunkMap);
         if (retained == null) {
@@ -258,7 +259,7 @@ public final class NativeWorldGenerationImpl implements NativeWorldGeneration {
     @Override
     public void abandonBootstrap(World world) {
         ServerLevel level = ((CraftWorld) world).getHandle();
-        ChunkGenerator generator = level.getChunkSource().getGenerator();
+        ChunkGenerator generator = structureGenerator(level);
         if (generator instanceof NativeChunkGenerator<?, ?, ?, ?, ?> nativeGenerator) {
             nativeGenerator.structureStateLifecycle().abandonRetainedState();
         }
@@ -287,6 +288,12 @@ public final class NativeWorldGenerationImpl implements NativeWorldGeneration {
         }
         structureState.ensureStructuresGenerated();
         publisher.publish();
+    }
+
+    private static ChunkGenerator structureGenerator(ServerLevel level) {
+        ChunkGenerator active = level.getChunkSource().getGenerator();
+        NativeChunkGenerator<?, ?, ?, ?, ?> nativeGenerator = NativeGeneratorChain.find(active, NativeChunkGenerator.class);
+        return nativeGenerator == null ? active : nativeGenerator;
     }
 
     private NativeChunkGenerator<?, ?, ?, ?, ?> requireNativeGenerator(
