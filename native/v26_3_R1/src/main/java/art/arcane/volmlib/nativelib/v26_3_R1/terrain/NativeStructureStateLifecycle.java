@@ -1,6 +1,7 @@
 package art.arcane.volmlib.nativelib.v26_3_R1.terrain;
 
 import art.arcane.volmlib.nativelib.terrain.NativeStructureBootstrapPolicy;
+import art.arcane.volmlib.nativelib.common.terrain.NativeGeneratorChain;
 import net.minecraft.server.level.ChunkMap;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.level.chunk.ChunkGenerator;
@@ -188,7 +189,7 @@ public final class NativeStructureStateLifecycle {
     private void requireCurrentStructureOwner(ServerLevel level, ChunkMap chunkMap) {
         if (runtimeLevel != level
                 || level.getChunkSource().chunkMap != chunkMap
-                || level.getChunkSource().getGenerator() != generator) {
+                || !NativeGeneratorChain.contains(level.getChunkSource().getGenerator(), generator)) {
             throw new IllegalStateException("Native structure state no longer belongs to the active world runtime.");
         }
     }
