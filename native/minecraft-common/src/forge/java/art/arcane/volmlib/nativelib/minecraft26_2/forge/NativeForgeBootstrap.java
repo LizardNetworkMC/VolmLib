@@ -19,7 +19,6 @@ import net.minecraftforge.event.level.BlockEvent;
 import net.minecraftforge.event.level.LevelEvent;
 import net.minecraftforge.event.server.ServerAboutToStartEvent;
 import net.minecraftforge.event.server.ServerStartedEvent;
-import net.minecraftforge.event.server.ServerStartingEvent;
 import net.minecraftforge.event.server.ServerStoppedEvent;
 import net.minecraftforge.event.server.ServerStoppingEvent;
 import net.minecraftforge.common.loot.IGlobalLootModifier;
@@ -31,6 +30,7 @@ import net.minecraftforge.registries.ForgeRegistries;
 import net.minecraftforge.server.permission.events.PermissionGatherEvent;
 import java.util.function.Predicate;
 import art.arcane.volmlib.nativelib.minecraft26_2.modded.NativeModdedCallbacks;
+import art.arcane.volmlib.nativelib.minecraft26_2.modded.NativeModdedLifecycle;
 import art.arcane.volmlib.nativelib.minecraft26_2.modded.NativeCommandRegistration;
 import art.arcane.volmlib.nativelib.minecraft26_2.modded.NativeChunkGeneratorDefinition;
 
@@ -48,8 +48,12 @@ public final class NativeForgeBootstrap {
     }
 
     public static void install(NativeForgeLoader loader, NativeModdedCallbacks callbacks) {
-        ServerAboutToStartEvent.BUS.addListener((ServerAboutToStartEvent event) -> callbacks.aboutToStart().accept(NativeModdedServer.fromHandle(event.getServer())));
-        ServerStartingEvent.BUS.addListener((ServerStartingEvent event) -> callbacks.start().accept(NativeModdedServer.fromHandle(event.getServer())));
+        NativeModdedLifecycle.bind(callbacks.levelsReady());
+        ServerAboutToStartEvent.BUS.addListener((ServerAboutToStartEvent event) -> {
+            NativeModdedServer server = NativeModdedServer.fromHandle(event.getServer());
+            callbacks.aboutToStart().accept(server);
+            callbacks.start().accept(server);
+        });
         ServerStartedEvent.BUS.addListener((ServerStartedEvent event) -> callbacks.started().accept(NativeModdedServer.fromHandle(event.getServer())));
         ServerStoppingEvent.BUS.addListener((ServerStoppingEvent event) -> callbacks.stop().run());
         ServerStoppedEvent.BUS.addListener((ServerStoppedEvent event) -> callbacks.stopped().run());

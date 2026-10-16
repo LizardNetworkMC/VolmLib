@@ -1,0 +1,25 @@
+{
+  "required": true,
+  "minVersion": "0.8",
+  "package": "art.arcane.volmlib.nativelib.minecraft26_2.modded.mixin",
+  "compatibilityLevel": "JAVA_21",
+  "mixins": [
+    "ServerLevelsReadyMixin",
+    "ServerLevelStructureBootstrapMixin",
+    "RegistryClientNamesMixin",
+    "EntityPersistenceMixin",
+    "MobAwarenessMixin",
+    "StructureTemplatePaletteConcurrencyMixin",
+    "WorldGenerationWriteGuardMixin",
+    "ChunkMapTerrainReceiptAccess",
+    "ChunkTerrainReceiptMixin",
+    "LevelChunkTerrainReceiptMixin",
+    "SerializableTerrainReceiptMixin",
+    "LivingEntityLootMixin",
+    "PackRepositorySelectionMixin",
+    "JigsawPlacementBoundsMixin"
+  ],
+  "injectors": {
+    "defaultRequire": 1
+  }
+}

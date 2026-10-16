@@ -86,3 +86,14 @@ tasks.named('processResources') {
         into('META-INF/volmit')
     }
 }
+
+tasks.named('processResources') {
+    from('../native/minecraft-common/src/versions/1.21.1/resources/fabric/volmlib.accesswidener') {
+        into('META-INF/volmlib/native-access/minecraft1_21_1/fabric')
+    }
+    for (String loader : ['forge', 'neoforge']) {
+        from("../native/minecraft-common/src/versions/1.21.1/resources/${loader}/META-INF/accesstransformer.cfg") {
+            into("META-INF/volmlib/native-access/minecraft1_21_1/${loader}")
+        }
+    }
+}

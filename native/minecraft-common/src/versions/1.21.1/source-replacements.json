@@ -1,0 +1,726 @@
+{
+  "global": [
+    {
+      "pattern": "\\bIdentifier\\b",
+      "replacement": "ResourceLocation"
+    },
+    {
+      "pattern": "\\bEntitySpawnReason\\b",
+      "replacement": "MobSpawnType"
+    },
+    {
+      "pattern": "net\\.minecraft\\.world\\.entity\\.animal\\.panda\\.Panda",
+      "replacement": "net.minecraft.world.entity.animal.Panda"
+    },
+    {
+      "pattern": "net\\.minecraft\\.world\\.entity\\.npc\\.villager\\.Villager",
+      "replacement": "net.minecraft.world.entity.npc.Villager"
+    },
+    {
+      "pattern": "net\\.minecraft\\.world\\.level\\.gamerules\\.GameRules",
+      "replacement": "net.minecraft.world.level.GameRules"
+    },
+    {
+      "pattern": "\\bSpeleothemBlock\\b",
+      "replacement": "PointedDripstoneBlock"
+    },
+    {
+      "pattern": "\\bSpeleothemThickness\\b",
+      "replacement": "DripstoneThickness"
+    },
+    {
+      "pattern": "\\bEntityTypes\\b",
+      "replacement": "EntityType"
+    },
+    {
+      "pattern": "\\bAbstractSpreadingStructurePlacement\\b",
+      "replacement": "StructurePlacement"
+    },
+    {
+      "pattern": "\\bDirectPoolAlias\\b",
+      "replacement": "Direct"
+    },
+    {
+      "pattern": "\\bRandomGroupPoolAlias\\b",
+      "replacement": "RandomGroup"
+    },
+    {
+      "pattern": "\\bRandomPoolAlias\\b",
+      "replacement": "Random"
+    },
+    {
+      "pattern": "\\.identifier\\(\\)",
+      "replacement": ".location()"
+    },
+    {
+      "pattern": "ChunkPos\\.pack\\(",
+      "replacement": "ChunkPos.asLong("
+    },
+    {
+      "pattern": "\\.registryAccess\\(\\)\\.lookupOrThrow\\(",
+      "replacement": ".registryAccess().registryOrThrow("
+    },
+    {
+      "pattern": "\\.getPos\\(\\)\\.x\\(\\)",
+      "replacement": ".getPos().x"
+    },
+    {
+      "pattern": "\\.getPos\\(\\)\\.z\\(\\)",
+      "replacement": ".getPos().z"
+    },
+    {
+      "pattern": "\\.getChunkPos\\(\\)\\.x\\(\\)",
+      "replacement": ".getChunkPos().x"
+    },
+    {
+      "pattern": "\\.getChunkPos\\(\\)\\.z\\(\\)",
+      "replacement": ".getChunkPos().z"
+    },
+    {
+      "pattern": "IdentifierArgument",
+      "replacement": "ResourceLocationArgument"
+    },
+    {
+      "pattern": "IdentifierArgument\\.identifier\\(\\)",
+      "replacement": "ResourceLocationArgument.id()"
+    }
+  ],
+  "files": {
+    "art/arcane/volmlib/nativelib/minecraft26_2/modded/NativeEntityRuntime.java": [
+      {
+        "pattern": "\\bENTITY_TYPE\\.getValue",
+        "replacement": "ENTITY_TYPE.get"
+      },
+      {
+        "pattern": "\\bSOUND_EVENT\\.getValue",
+        "replacement": "SOUND_EVENT.get"
+      },
+      {
+        "pattern": "\\bPARTICLE_TYPE\\.getValue",
+        "replacement": "PARTICLE_TYPE.get"
+      }
+    ],
+    "art/arcane/volmlib/nativelib/minecraft26_2/modded/ModdedPlatformWorld.java": [
+      {
+        "pattern": "\\blevel\\.getMinY",
+        "replacement": "level.getMinBuildHeight"
+      },
+      {
+        "pattern": "level\\.getDefaultClockTime\\(\\)",
+        "replacement": "level.getDayTime()"
+      }
+    ],
+    "art/arcane/volmlib/nativelib/minecraft26_2/terrain/NativeRegistryDefinitions.java": [
+      {
+        "pattern": "\\bregistry\\.getValue",
+        "replacement": "registry.get"
+      },
+      {
+        "pattern": "\\baccess\\.lookupOrThrow\\(",
+        "replacement": "access.registryOrThrow("
+      }
+    ],
+    "art/arcane/volmlib/nativelib/minecraft26_2/modded/NativeRegistryAccess.java": [
+      {
+        "pattern": "\\bITEM\\.getValue",
+        "replacement": "ITEM.get"
+      },
+      {
+        "pattern": "\\bENTITY_TYPE\\.getValue",
+        "replacement": "ENTITY_TYPE.get"
+      }
+    ],
+    "art/arcane/volmlib/nativelib/minecraft26_2/modded/NativeProtocolWorld.java": [
+      {
+        "pattern": "\\blevel\\.getMinY",
+        "replacement": "level.getMinBuildHeight"
+      }
+    ],
+    "art/arcane/volmlib/nativelib/minecraft26_2/modded/NativeEditWorld.java": [
+      {
+        "pattern": "\\blevel\\.getMinY",
+        "replacement": "level.getMinBuildHeight"
+      },
+      {
+        "pattern": "\\bSOUND_EVENT\\.getValue",
+        "replacement": "SOUND_EVENT.get"
+      },
+      {
+        "pattern": "\\blevel\\.getMaxY\\(\\)",
+        "replacement": "(level.getMaxBuildHeight() - 1)"
+      }
+    ],
+    "art/arcane/volmlib/nativelib/minecraft26_2/modded/NativeTileData.java": [
+      {
+        "pattern": "\\bBLOCK\\.getValue",
+        "replacement": "BLOCK.get"
+      }
+    ],
+    "art/arcane/volmlib/nativelib/minecraft26_2/modded/NativeSpawnQueries.java": [
+      {
+        "pattern": "\\blevel\\.getMinY",
+        "replacement": "level.getMinBuildHeight"
+      },
+      {
+        "pattern": "\\blevel\\.getMaxY\\(\\)",
+        "replacement": "(level.getMaxBuildHeight() - 1)"
+      }
+    ],
+    "art/arcane/volmlib/nativelib/minecraft26_2/modded/NativeCommandSource.java": [
+      {
+        "pattern": "\\bSOUND_EVENT\\.getValue",
+        "replacement": "SOUND_EVENT.get"
+      },
+      {
+        "pattern": "Commands\\.hasPermission\\(Commands\\.LEVEL_GAMEMASTERS\\)\\.test\\(source\\)",
+        "replacement": "source.hasPermission(Commands.LEVEL_GAMEMASTERS)"
+      }
+    ],
+    "modded/art/arcane/volmlib/nativelib/minecraft26_2/modded/NativeModdedChunkGenerator.java": [
+      {
+        "pattern": "\\bheight\\.getMinY",
+        "replacement": "height.getMinBuildHeight"
+      },
+      {
+        "pattern": "\\bpos\\.x\\(\\)",
+        "replacement": "pos.x"
+      },
+      {
+        "pattern": "\\bpos\\.z\\(\\)",
+        "replacement": "pos.z"
+      },
+      {
+        "pattern": "\\bchunkPos\\.x\\(\\)",
+        "replacement": "chunkPos.x"
+      },
+      {
+        "pattern": "\\bchunkPos\\.z\\(\\)",
+        "replacement": "chunkPos.z"
+      },
+      {
+        "pattern": "\\bchunk\\.getMinY",
+        "replacement": "chunk.getMinBuildHeight"
+      },
+      {
+        "pattern": "\\bcenter\\.x\\(\\)",
+        "replacement": "center.x"
+      },
+      {
+        "pattern": "\\bcenter\\.z\\(\\)",
+        "replacement": "center.z"
+      },
+      {
+        "pattern": "\\bheightAccessor\\.getMinY",
+        "replacement": "heightAccessor.getMinBuildHeight"
+      }
+    ],
+    "modded/art/arcane/volmlib/nativelib/minecraft26_2/modded/NativeModdedStructureStage.java": [
+      {
+        "pattern": "\\blevel\\.getMinY",
+        "replacement": "level.getMinBuildHeight"
+      },
+      {
+        "pattern": "\\bchunkPos\\.x\\(\\)",
+        "replacement": "chunkPos.x"
+      },
+      {
+        "pattern": "\\bchunkPos\\.z\\(\\)",
+        "replacement": "chunkPos.z"
+      },
+      {
+        "pattern": "\\bchunk\\.getMinY",
+        "replacement": "chunk.getMinBuildHeight"
+      },
+      {
+        "pattern": "\\bworld\\.getMinY",
+        "replacement": "world.getMinBuildHeight"
+      },
+      {
+        "pattern": "\\bstartChunk\\.pack",
+        "replacement": "startChunk.toLong"
+      },
+      {
+        "pattern": "\\borigin\\.x\\(\\)",
+        "replacement": "origin.x"
+      },
+      {
+        "pattern": "\\borigin\\.z\\(\\)",
+        "replacement": "origin.z"
+      },
+      {
+        "pattern": "\\bregistryAccess\\.lookupOrThrow\\(",
+        "replacement": "registryAccess.registryOrThrow("
+      }
+    ],
+    "art/arcane/volmlib/nativelib/minecraft26_2/terrain/NativeStructureVanillaLocator.java": [
+      {
+        "pattern": "\\bposition\\.x\\(\\)",
+        "replacement": "position.x"
+      },
+      {
+        "pattern": "\\bposition\\.z\\(\\)",
+        "replacement": "position.z"
+      },
+      {
+        "pattern": "\\bcandidatePosition\\.x\\(\\)",
+        "replacement": "candidatePosition.x"
+      },
+      {
+        "pattern": "\\bcandidatePosition\\.z\\(\\)",
+        "replacement": "candidatePosition.z"
+      },
+      {
+        "pattern": "getWorldGenSettings\\(\\)\\.options\\(\\)",
+        "replacement": "getWorldData().worldGenOptions()"
+      }
+    ],
+    "art/arcane/volmlib/nativelib/minecraft26_2/terrain/NativeStructureVolumeSource.java": [
+      {
+        "pattern": "\\bregistry\\.getValue",
+        "replacement": "registry.get"
+      },
+      {
+        "pattern": "context\\.heightAccessor\\(\\)\\.getMinY\\(\\)",
+        "replacement": "context.heightAccessor().getMinBuildHeight()"
+      }
+    ],
+    "modded/art/arcane/volmlib/nativelib/minecraft26_2/modded/NativeModdedImportedFeatures.java": [
+      {
+        "pattern": "\\bcenterPos\\.x\\(\\)",
+        "replacement": "centerPos.x"
+      },
+      {
+        "pattern": "\\bcenterPos\\.z\\(\\)",
+        "replacement": "centerPos.z"
+      },
+      {
+        "pattern": "\\bchunkPos\\.x\\(\\)",
+        "replacement": "chunkPos.x"
+      },
+      {
+        "pattern": "\\bchunkPos\\.z\\(\\)",
+        "replacement": "chunkPos.z"
+      },
+      {
+        "pattern": "\\blevel\\.getMinY",
+        "replacement": "level.getMinBuildHeight"
+      }
+    ],
+    "art/arcane/volmlib/nativelib/minecraft26_2/modded/NativeBiomeRegistry.java": [
+      {
+        "pattern": "\\bregistry\\.getValue",
+        "replacement": "registry.get"
+      }
+    ],
+    "art/arcane/volmlib/nativelib/minecraft26_2/modded/ModdedNativeStructureWorldgenAccess.java": [
+      {
+        "pattern": "\\bdelegate\\.getMinY",
+        "replacement": "delegate.getMinBuildHeight"
+      },
+      {
+        "pattern": "\\bgenerationCenter\\.x\\(\\)",
+        "replacement": "generationCenter.x"
+      },
+      {
+        "pattern": "\\bgenerationCenter\\.z\\(\\)",
+        "replacement": "generationCenter.z"
+      }
+    ],
+    "art/arcane/volmlib/nativelib/minecraft26_2/modded/NativeBlockResolver.java": [
+      {
+        "pattern": "\\bBLOCK\\.getValue",
+        "replacement": "BLOCK.get"
+      },
+      {
+        "pattern": "parseForBlock\\(BuiltInRegistries\\.BLOCK,",
+        "replacement": "parseForBlock(BuiltInRegistries.BLOCK.asLookup(),"
+      }
+    ],
+    "art/arcane/volmlib/nativelib/minecraft26_2/modded/NativeBlockProperties.java": [
+      {
+        "pattern": "\\bBLOCK\\.getValue",
+        "replacement": "BLOCK.get"
+      }
+    ],
+    "art/arcane/volmlib/nativelib/minecraft26_2/modded/NativeItemTranslator.java": [
+      {
+        "pattern": "\\bITEM\\.getValue",
+        "replacement": "ITEM.get"
+      }
+    ],
+    "art/arcane/volmlib/nativelib/minecraft26_2/modded/NativePlayerEffects.java": [
+      {
+        "pattern": "\\bPARTICLE_TYPE\\.getValue",
+        "replacement": "PARTICLE_TYPE.get"
+      }
+    ],
+    "art/arcane/volmlib/nativelib/minecraft26_2/modded/NativeChunkRegeneration.java": [
+      {
+        "pattern": "\\blevel\\.getMinY",
+        "replacement": "level.getMinBuildHeight"
+      },
+      {
+        "pattern": "\\blevel\\.getMaxY\\(\\)",
+        "replacement": "(level.getMaxBuildHeight() - 1)"
+      }
+    ],
+    "art/arcane/volmlib/nativelib/minecraft26_2/modded/NativeStructureInspection.java": [
+      {
+        "pattern": "\\bcandidate\\.x\\(\\)",
+        "replacement": "candidate.x"
+      },
+      {
+        "pattern": "\\bcandidate\\.z\\(\\)",
+        "replacement": "candidate.z"
+      },
+      {
+        "pattern": "\\bcandidate\\.pack",
+        "replacement": "candidate.toLong"
+      },
+      {
+        "pattern": "\\bchunkPos\\.x\\(\\)",
+        "replacement": "chunkPos.x"
+      },
+      {
+        "pattern": "\\bchunkPos\\.z\\(\\)",
+        "replacement": "chunkPos.z"
+      },
+      {
+        "pattern": "\\blevel\\.getMinY",
+        "replacement": "level.getMinBuildHeight"
+      },
+      {
+        "pattern": "\\blevel\\.getMaxY\\(\\)",
+        "replacement": "(level.getMaxBuildHeight() - 1)"
+      },
+      {
+        "pattern": "registry\\.get\\(id\\)\\.ifPresent\\(",
+        "replacement": "registry.getHolder(ResourceKey.create(Registries.STRUCTURE, id)).ifPresent("
+      },
+      {
+        "pattern": "import\\ net\\.minecraft\\.resources\\.ResourceLocation;",
+        "replacement": "import net.minecraft.resources.ResourceLocation;\nimport net.minecraft.resources.ResourceKey;"
+      }
+    ],
+    "art/arcane/volmlib/nativelib/minecraft26_2/modded/NativeWorldInspection.java": [
+      {
+        "pattern": "\\blevel\\.getMinY",
+        "replacement": "level.getMinBuildHeight"
+      }
+    ],
+    "art/arcane/volmlib/nativelib/minecraft26_2/modded/NativeWorldTeleport.java": [
+      {
+        "pattern": "\\bchunkPos\\.x\\(\\)",
+        "replacement": "chunkPos.x"
+      },
+      {
+        "pattern": "\\bchunkPos\\.z\\(\\)",
+        "replacement": "chunkPos.z"
+      },
+      {
+        "pattern": "\\blevel\\.getMinY",
+        "replacement": "level.getMinBuildHeight"
+      },
+      {
+        "pattern": "\\bcenter\\.x\\(\\)",
+        "replacement": "center.x"
+      },
+      {
+        "pattern": "\\bcenter\\.z\\(\\)",
+        "replacement": "center.z"
+      },
+      {
+        "pattern": "\\blevel\\.getMaxY\\(\\)",
+        "replacement": "(level.getMaxBuildHeight() - 1)"
+      }
+    ],
+    "modded/art/arcane/volmlib/nativelib/minecraft26_2/modded/NativeStructureOperations.java": [
+      {
+        "pattern": "\\bregistry\\.getValue",
+        "replacement": "registry.get"
+      },
+      {
+        "pattern": "\\binstance\\.getStructureTemplateManager",
+        "replacement": "instance.getStructureManager"
+      }
+    ],
+    "art/arcane/volmlib/nativelib/minecraft26_2/modded/NativeTaggedItems.java": [
+      {
+        "pattern": "\\bITEM\\.getValue",
+        "replacement": "ITEM.get"
+      }
+    ],
+    "art/arcane/volmlib/nativelib/minecraft26_2/terrain/NativeStructureStartInjector.java": [
+      {
+        "pattern": "\\bregistry\\.getValue",
+        "replacement": "registry.get"
+      }
+    ],
+    "art/arcane/volmlib/nativelib/minecraft26_2/terrain/NativeStructureReferenceRepair.java": [
+      {
+        "pattern": "\\btarget\\.x\\(\\)",
+        "replacement": "target.x"
+      },
+      {
+        "pattern": "\\btarget\\.z\\(\\)",
+        "replacement": "target.z"
+      },
+      {
+        "pattern": "start\\.origin\\(\\)\\.pack\\(\\)",
+        "replacement": "start.origin().toLong()"
+      },
+      {
+        "pattern": "start\\.getChunkPos\\(\\)\\.pack\\(\\)",
+        "replacement": "start.getChunkPos().toLong()"
+      }
+    ],
+    "art/arcane/volmlib/nativelib/minecraft26_2/terrain/NativeStructureTemplatePoolBounds.java": [
+      {
+        "pattern": "\\bpools\\.getValue",
+        "replacement": "pools.get"
+      },
+      {
+        "pattern": "\\bregistryAccess\\.lookupOrThrow\\(",
+        "replacement": "registryAccess.registryOrThrow("
+      }
+    ],
+    "art/arcane/volmlib/nativelib/minecraft26_2/terrain/NativeTransitionColumn.java": [
+      {
+        "pattern": "\\bheight\\.getMinY",
+        "replacement": "height.getMinBuildHeight"
+      },
+      {
+        "pattern": "parseForBlock\\(BuiltInRegistries\\.BLOCK,",
+        "replacement": "parseForBlock(BuiltInRegistries.BLOCK.asLookup(),"
+      }
+    ],
+    "art/arcane/volmlib/nativelib/minecraft26_2/terrain/NativeStructureLocatePersistence.java": [
+      {
+        "pattern": "\\bchunkPos\\.pack",
+        "replacement": "chunkPos.toLong"
+      }
+    ],
+    "art/arcane/volmlib/nativelib/minecraft26_2/terrain/NativeStructureOwnershipRecovery.java": [
+      {
+        "pattern": "\\borigin\\.x\\(\\)",
+        "replacement": "origin.x"
+      },
+      {
+        "pattern": "\\borigin\\.z\\(\\)",
+        "replacement": "origin.z"
+      }
+    ],
+    "art/arcane/volmlib/nativelib/minecraft26_2/terrain/WorldgenTerrainHeightmaps.java": [
+      {
+        "pattern": "\\bgenerationCenter\\.x\\(\\)",
+        "replacement": "generationCenter.x"
+      },
+      {
+        "pattern": "\\bgenerationCenter\\.z\\(\\)",
+        "replacement": "generationCenter.z"
+      },
+      {
+        "pattern": "\\bchunk\\.getMinY",
+        "replacement": "chunk.getMinBuildHeight"
+      },
+      {
+        "pattern": "\\bpos\\.x\\(\\)",
+        "replacement": "pos.x"
+      },
+      {
+        "pattern": "\\bpos\\.z\\(\\)",
+        "replacement": "pos.z"
+      }
+    ],
+    "art/arcane/volmlib/nativelib/minecraft26_2/terrain/NativeStructureVerticalPlacer.java": [
+      {
+        "pattern": "\\bheightAccessor\\.getMinY",
+        "replacement": "heightAccessor.getMinBuildHeight"
+      },
+      {
+        "pattern": "\\bstartChunk\\.x\\(\\)",
+        "replacement": "startChunk.x"
+      },
+      {
+        "pattern": "\\bstartChunk\\.z\\(\\)",
+        "replacement": "startChunk.z"
+      }
+    ],
+    "art/arcane/volmlib/nativelib/minecraft26_2/terrain/NativeGenerationWriteGuard.java": [
+      {
+        "pattern": "\\bcenter\\.x\\(\\)",
+        "replacement": "center.x"
+      },
+      {
+        "pattern": "\\bcenter\\.z\\(\\)",
+        "replacement": "center.z"
+      }
+    ],
+    "art/arcane/volmlib/nativelib/minecraft26_2/terrain/NativeStructureOwnershipFingerprint.java": [
+      {
+        "pattern": "\\borigin\\.x\\(\\)",
+        "replacement": "origin.x"
+      },
+      {
+        "pattern": "\\borigin\\.z\\(\\)",
+        "replacement": "origin.z"
+      },
+      {
+        "pattern": "single\\.getTemplateLocation\\(\\)",
+        "replacement": "single.template.left().orElseThrow()"
+      },
+      {
+        "pattern": "list\\.getElements\\(\\)",
+        "replacement": "list.elements"
+      }
+    ],
+    "art/arcane/volmlib/nativelib/minecraft26_2/terrain/NativeTerrainColumns.java": [
+      {
+        "pattern": "\\bheight\\.getMinY",
+        "replacement": "height.getMinBuildHeight"
+      },
+      {
+        "pattern": "\\bBLOCK\\.getValue",
+        "replacement": "BLOCK.get"
+      }
+    ],
+    "art/arcane/volmlib/nativelib/minecraft26_2/terrain/NativeStructureReferenceEnvelope.java": [
+      {
+        "pattern": "\\bstartChunk\\.x\\(\\)",
+        "replacement": "startChunk.x"
+      },
+      {
+        "pattern": "\\bstartChunk\\.z\\(\\)",
+        "replacement": "startChunk.z"
+      }
+    ],
+    "modded/art/arcane/volmlib/nativelib/minecraft26_2/modded/NativeWorldgenScan.java": [
+      {
+        "pattern": "\\baccess\\.lookupOrThrow\\(",
+        "replacement": "access.registryOrThrow("
+      }
+    ],
+    "modded/art/arcane/volmlib/nativelib/minecraft26_2/modded/NativeEntityBehavior.java": [
+      {
+        "pattern": "\\.entityTags\\(\\)",
+        "replacement": ".getTags()"
+      }
+    ],
+    "art/arcane/volmlib/nativelib/minecraft26_2/modded/NativeEntityLoot.java": [
+      {
+        "pattern": "\\.entityTags\\(\\)",
+        "replacement": ".getTags()"
+      },
+      {
+        "pattern": "container\\.setContainerLootTable\\(",
+        "replacement": "container.setLootTable("
+      },
+      {
+        "pattern": "living\\.spawnAtLocation\\(level,\\ stack\\.stack\\(\\)\\)",
+        "replacement": "living.spawnAtLocation(stack.stack())"
+      }
+    ],
+    "art/arcane/volmlib/nativelib/minecraft26_2/modded/NativeContainerLoot.java": [
+      {
+        "pattern": "ChestBlock\\.getConnectedBlockPos\\(pos,\\ state\\)",
+        "replacement": "pos.relative(ChestBlock.getConnectedDirection(state))"
+      }
+    ],
+    "art/arcane/volmlib/nativelib/minecraft26_2/modded/NativeSpawnedEntity.java": [
+      {
+        "pattern": "\\.setPermanentlyInvulnerable\\(",
+        "replacement": ".setInvulnerable("
+      },
+      {
+        "pattern": "\\.isPermanentlyInvulnerable\\(\\)",
+        "replacement": ".isInvulnerable()"
+      },
+      {
+        "pattern": "entity\\.getInvulnerableTime\\(\\)",
+        "replacement": "entity.invulnerableTime"
+      },
+      {
+        "pattern": "entity\\.setInvulnerableTime\\(invulnerableTicks\\)",
+        "replacement": "entity.invulnerableTime = invulnerableTicks"
+      },
+      {
+        "pattern": "entity\\.setInvulnerableTime\\(state\\.invulnerableTicks\\(\\)\\)",
+        "replacement": "entity.invulnerableTime = state.invulnerableTicks()"
+      }
+    ],
+    "art/arcane/volmlib/nativelib/minecraft26_2/modded/NativeCommandText.java": [
+      {
+        "pattern": "new\\ ClickEvent\\.CopyToClipboard\\(text\\)",
+        "replacement": "new ClickEvent(ClickEvent.Action.COPY_TO_CLIPBOARD, text)"
+      },
+      {
+        "pattern": "new\\ ClickEvent\\.RunCommand\\(command\\)",
+        "replacement": "new ClickEvent(ClickEvent.Action.RUN_COMMAND, command)"
+      },
+      {
+        "pattern": "new\\ ClickEvent\\.SuggestCommand\\(command\\)",
+        "replacement": "new ClickEvent(ClickEvent.Action.SUGGEST_COMMAND, command)"
+      },
+      {
+        "pattern": "new\\ HoverEvent\\.ShowText\\(text\\.value\\)",
+        "replacement": "new HoverEvent(HoverEvent.Action.SHOW_TEXT, text.value)"
+      }
+    ],
+    "modded/art/arcane/volmlib/nativelib/minecraft26_2/modded/mixin/MobAwarenessMixin.java": [
+      {
+        "pattern": "mob\\.getGoalSelector\\(\\)",
+        "replacement": "mob.goalSelector"
+      }
+    ],
+    "art/arcane/volmlib/nativelib/minecraft26_2/modded/NativeWorldMaintenance.java": [
+      {
+        "pattern": "Block\\.UPDATE_SKIP_ON_PLACE",
+        "replacement": "Block.UPDATE_SUPPRESS_DROPS"
+      },
+      {
+        "pattern": "level\\.getForceLoadedChunks\\(\\)",
+        "replacement": "level.getForcedChunks()"
+      }
+    ],
+    "art/arcane/volmlib/nativelib/minecraft26_2/modded/NativeStateRotator.java": [
+      {
+        "pattern": "List<Integer>\\ values\\ =\\ property\\.getPossibleValues\\(\\);",
+        "replacement": "List<Integer> values = List.copyOf(property.getPossibleValues());"
+      }
+    ],
+    "art/arcane/volmlib/nativelib/minecraft26_2/modded/NativeStructureQueries.java": [
+      {
+        "pattern": "registry\\.get\\(identifier\\)\\.map\\(",
+        "replacement": "registry.getHolder(ResourceKey.create(Registries.STRUCTURE, identifier)).map("
+      },
+      {
+        "pattern": "import\\ net\\.minecraft\\.resources\\.ResourceLocation;",
+        "replacement": "import net.minecraft.resources.ResourceLocation;\nimport net.minecraft.resources.ResourceKey;"
+      }
+    ],
+    "art/arcane/volmlib/nativelib/minecraft26_2/modded/NativeTerrainReceipts.java": [
+      {
+        "pattern": "chunk\\.markUnsaved\\(\\)",
+        "replacement": "chunk.setUnsaved(true)"
+      }
+    ],
+    "art/arcane/volmlib/nativelib/minecraft26_2/modded/NativeWorldBoundary.java": [
+      {
+        "pattern": "border\\.setSafeZone\\(",
+        "replacement": "border.setDamageSafeZone("
+      }
+    ],
+    "art/arcane/volmlib/nativelib/minecraft26_2/terrain/NativeStructureGenerationKeys.java": [
+      {
+        "pattern": "getWorldGenSettings\\(\\)\\.options\\(\\)",
+        "replacement": "getWorldData().worldGenOptions()"
+      }
+    ],
+    "art/arcane/volmlib/nativelib/minecraft26_2/terrain/NativeStructureTemplateOccupancy.java": [
+      {
+        "pattern": "listElement\\.getElements\\(\\)",
+        "replacement": "listElement.elements"
+      }
+    ]
+  }
+}

@@ -29,6 +29,7 @@ import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.phys.BlockHitResult;
 import art.arcane.volmlib.nativelib.minecraft26_2.modded.NativeModdedCallbacks;
+import art.arcane.volmlib.nativelib.minecraft26_2.modded.NativeModdedLifecycle;
 import art.arcane.volmlib.nativelib.minecraft26_2.modded.NativeCommandRegistration;
 import art.arcane.volmlib.nativelib.minecraft26_2.modded.NativeChunkGeneratorDefinition;
 
@@ -42,6 +43,7 @@ public final class NativeFabricBootstrap {
     }
 
     public static void install(NativeModdedCallbacks callbacks) {
+        NativeModdedLifecycle.bind(callbacks.levelsReady());
         ServerLifecycleEvents.SERVER_STARTING.register((MinecraftServer server) -> callbacks.start().accept(NativeModdedServer.fromHandle(server)));
         ServerLifecycleEvents.SERVER_STARTED.register((MinecraftServer server) -> callbacks.started().accept(NativeModdedServer.fromHandle(server)));
         ServerLifecycleEvents.SERVER_STOPPING.register((MinecraftServer server) -> callbacks.stop().run());
