@@ -48,13 +48,27 @@ tasks.named('test') {
     maxParallelForks = testForkCount
 }
 
+File nativeMinecraftSources = file('../native/minecraft-common/src')
+Map<String, String> nativeAccessRules = [
+    fabric  : 'volmlib.accesswidener',
+    forge   : 'META-INF/accesstransformer.cfg',
+    neoforge: 'META-INF/accesstransformer.cfg'
+]
+
 tasks.named('processResources') {
-    from('../native/minecraft-common/src/fabric/resources/volmlib.accesswidener') {
-        into('META-INF/volmlib/native-access/minecraft26_2/fabric')
+    nativeAccessRules.each { String loader, String rules ->
+        from(new File(nativeMinecraftSources, "${loader}/resources/${rules}")) {
+            into("META-INF/volmlib/native-access/minecraft26_3/${loader}")
+        }
     }
-    for (String loader : ['forge', 'neoforge']) {
-        from("../native/minecraft-common/src/${loader}/resources/META-INF/accesstransformer.cfg") {
-            into("META-INF/volmlib/native-access/minecraft26_2/${loader}")
+    new File(nativeMinecraftSources, 'versions').listFiles().findAll { File version ->
+        nativeAccessRules.any { String loader, String rules -> new File(version, "resources/${loader}/${rules}").isFile() }
+    }.each { File version ->
+        String implementation = 'minecraft' + version.name.replace('.', '_')
+        nativeAccessRules.each { String loader, String rules ->
+            from(new File(version, "resources/${loader}/${rules}")) {
+                into("META-INF/volmlib/native-access/${implementation}/${loader}")
+            }
         }
     }
 }
@@ -87,13 +101,3 @@ tasks.named('processResources') {
     }
 }
 
-tasks.named('processResources') {
-    from('../native/minecraft-common/src/versions/1.21.1/resources/fabric/volmlib.accesswidener') {
-        into('META-INF/volmlib/native-access/minecraft1_21_1/fabric')
-    }
-    for (String loader : ['forge', 'neoforge']) {
-        from("../native/minecraft-common/src/versions/1.21.1/resources/${loader}/META-INF/accesstransformer.cfg") {
-            into("META-INF/volmlib/native-access/minecraft1_21_1/${loader}")
-        }
-    }
-}

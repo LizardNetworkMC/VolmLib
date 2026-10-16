@@ -18,25 +18,25 @@ class NativeAccessRulesTest {
 
     @Test
     void preparesBundledRulesAndPreservesUnchangedInputs() throws Exception {
-        Path fabric = NativeAccessRules.prepare("minecraft26_2", "fabric", temporary.toFile()).toPath();
+        Path fabric = NativeAccessRules.prepare("minecraft26_3", "fabric", temporary.toFile()).toPath();
         assertTrue(Files.readString(fabric).startsWith("accessWidener v2 official\n"));
         FileTime timestamp = FileTime.fromMillis(1000L);
         Files.setLastModifiedTime(fabric, timestamp);
-        assertEquals(fabric, NativeAccessRules.prepare("minecraft26_2", "fabric", temporary.toFile()).toPath());
+        assertEquals(fabric, NativeAccessRules.prepare("minecraft26_3", "fabric", temporary.toFile()).toPath());
         assertEquals(timestamp, Files.getLastModifiedTime(fabric));
         Files.writeString(fabric, "stale");
-        NativeAccessRules.prepare("minecraft26_2", "fabric", temporary.toFile());
+        NativeAccessRules.prepare("minecraft26_3", "fabric", temporary.toFile());
         assertTrue(Files.readString(fabric).startsWith("accessWidener v2 official\n"));
     }
 
     @Test
     void packagesEachLoaderAccessTransformer() throws Exception {
         for (String loader : new String[]{"forge", "neoforge"}) {
-            Path rules = NativeAccessRules.prepare("minecraft26_2", loader, temporary.resolve(loader).toFile()).toPath();
+            Path rules = NativeAccessRules.prepare("minecraft26_3", loader, temporary.resolve(loader).toFile()).toPath();
             assertTrue(Files.readString(rules).contains("public net.minecraft.server.MinecraftServer levels"));
         }
         assertThrows(IllegalArgumentException.class,
-                () -> NativeAccessRules.prepare("minecraft26_2", "../unknown", temporary.toFile()));
+                () -> NativeAccessRules.prepare("minecraft26_3", "../unknown", temporary.toFile()));
     }
 
     @Test
@@ -48,7 +48,7 @@ class NativeAccessRulesTest {
         );
         for (Map.Entry<String, String> loader : expected.entrySet()) {
             Path directory = temporary.resolve(loader.getKey());
-            Path current = NativeAccessRules.prepare("minecraft26_2", loader.getKey(), directory.resolve("26.3").toFile()).toPath();
+            Path current = NativeAccessRules.prepare("minecraft26_3", loader.getKey(), directory.resolve("26.3").toFile()).toPath();
             String currentRules = Files.readString(current);
             Path older = NativeAccessRules.prepare("minecraft1_21_1", loader.getKey(), directory.resolve("1.21.1").toFile()).toPath();
             assertTrue(Files.readString(older).contains(loader.getValue()));
@@ -57,6 +57,16 @@ class NativeAccessRulesTest {
             Files.setLastModifiedTime(older, timestamp);
             NativeAccessRules.prepare("minecraft1_21_1", loader.getKey(), older.getParent().toFile());
             assertEquals(timestamp, Files.getLastModifiedTime(older));
+        }
+    }
+
+    @Test
+    void preparesRulesForEachMinecraftOverlay() throws Exception {
+        Path biome = NativeAccessRules.prepare("minecraft26_2", "fabric", temporary.resolve("26.2").toFile()).toPath();
+        assertTrue(Files.readString(biome).contains("Lnet/minecraft/world/level/biome/MobSpawnSettings;)V"));
+        for (String loader : new String[]{"fabric", "forge", "neoforge"}) {
+            Path rules = NativeAccessRules.prepare("minecraft26_1_2", loader, temporary.resolve("26.1.2").resolve(loader).toFile()).toPath();
+            assertTrue(Files.readString(rules).contains("goalSelector"));
         }
     }
 }
