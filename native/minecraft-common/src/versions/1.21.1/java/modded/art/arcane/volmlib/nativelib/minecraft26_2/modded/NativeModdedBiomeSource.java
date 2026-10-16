@@ -136,8 +136,6 @@ public final class NativeModdedBiomeSource<P extends NativeModdedBiomePolicy<Hol
                 new NativeModdedBiomePolicy.ClosestQuery<>(allowed, sampler,
                         () -> location(serializedSource.findClosestBiome3d(origin, searchRadius,
                                 sampleResolutionHorizontal, sampleResolutionVertical, allowed, sampler, level)),
-                        () -> location(super.findClosestBiome3d(origin, searchRadius,
-                                sampleResolutionHorizontal, sampleResolutionVertical, allowed, sampler, level)),
                         (candidates, resolver) -> search(new Search(origin, searchRadius,
                                 sampleResolutionHorizontal, sampleResolutionVertical, level), candidates, resolver)));
         return found == null ? null : Pair.of(new BlockPos(found.x(), found.y(), found.z()), found.biome());
