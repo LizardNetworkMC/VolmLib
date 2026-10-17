@@ -19,11 +19,12 @@ import java.lang.reflect.InvocationHandler;
 import java.lang.reflect.Method;
 import java.lang.reflect.Proxy;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 import java.util.logging.Logger;
 import java.util.concurrent.atomic.AtomicInteger;
-import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Consumer;
 
@@ -34,10 +35,13 @@ import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertNull;
 
 public class FoliaSchedulerTest {
+    private static final UUID PLAYER_ID = UUID.fromString("55555555-5555-5555-5555-555555555555");
+
     private SchedulerHandler schedulerHandler;
     private Server server;
     private Plugin plugin;
     private boolean primaryThread;
+    private final Map<UUID, Entity> connectedPlayers = new HashMap<>();
 
     @Before
     public void setUp() throws Exception {
@@ -49,6 +53,7 @@ public class FoliaSchedulerTest {
             case "getName" -> "Spigot";
             case "getVersion", "getBukkitVersion", "getMinecraftVersion" -> "26.2";
             case "getScheduler" -> scheduler;
+            case "getPlayer" -> arguments[0] instanceof UUID playerId ? connectedPlayers.get(playerId) : null;
             case "isPrimaryThread", "isTickThread", "isOwnedByCurrentRegion" -> primaryThread;
             default -> defaultValue(method.getReturnType());
         });
@@ -106,8 +111,7 @@ public class FoliaSchedulerTest {
 
     @Test
     public void connectedPlayerSurvivesInvalidWorldTransferAcrossFallbackTasks() {
-        AtomicBoolean online = new AtomicBoolean(true);
-        Entity player = playerWithoutWorldEntity(online);
+        Entity player = connectedPlayerWithoutWorldEntity();
         List<String> invoked = new ArrayList<>();
         assertTrue(FoliaScheduler.runEntity(plugin, player, () -> {
             invoked.add("first");
@@ -124,7 +128,7 @@ public class FoliaSchedulerTest {
     public void connectedInvalidPlayerRunsImmediatelyOnConventionalOwner() {
         primaryThread = true;
         List<String> invoked = new ArrayList<>();
-        assertTrue(FoliaScheduler.runEntity(plugin, playerWithoutWorldEntity(new AtomicBoolean(true)),
+        assertTrue(FoliaScheduler.runEntity(plugin, connectedPlayerWithoutWorldEntity(),
             () -> invoked.add("task"), 0L, () -> invoked.add("retired")));
         assertEquals(List.of("task"), invoked);
         assertTrue(schedulerHandler.tasks.isEmpty());
@@ -133,7 +137,7 @@ public class FoliaSchedulerTest {
     @Test
     public void cancellablePlayerFallbackSurvivesWorldTransfer() {
         List<String> invoked = new ArrayList<>();
-        assertNotNull(FoliaScheduler.scheduleEntity(plugin, playerWithoutWorldEntity(new AtomicBoolean(true)),
+        assertNotNull(FoliaScheduler.scheduleEntity(plugin, connectedPlayerWithoutWorldEntity(),
             new FoliaScheduler.DelayedTask(1L, () -> invoked.add("task"), () -> invoked.add("retired"))));
         schedulerHandler.tasks.get(0).run();
         assertEquals(List.of("task"), invoked);
@@ -141,16 +145,31 @@ public class FoliaSchedulerTest {
 
     @Test
     public void disconnectedPlayerRetiresAcceptedFallbackTasks() {
-        AtomicBoolean online = new AtomicBoolean(true);
-        Entity player = playerWithoutWorldEntity(online);
+        Entity player = connectedPlayerWithoutWorldEntity();
         List<String> invoked = new ArrayList<>();
         assertTrue(FoliaScheduler.runEntity(plugin, player, () -> invoked.add("task"),
             1L, () -> invoked.add("retired-run")));
         assertNotNull(FoliaScheduler.scheduleEntity(plugin, player,
             new FoliaScheduler.DelayedTask(1L, () -> invoked.add("task"), () -> invoked.add("retired-handle"))));
-        online.set(false);
+        connectedPlayers.clear();
         schedulerHandler.tasks.forEach(Runnable::run);
         assertEquals(List.of("retired-run", "retired-handle"), invoked);
+    }
+
+    @Test
+    public void staleRejoinedPlayerHandleRetiresAcceptedFallbackTasks() {
+        connectedPlayerWithoutWorldEntity();
+        Entity player = playerEntity((instance, method, arguments) -> switch (method.getName()) {
+            case "getUniqueId" -> PLAYER_ID;
+            case "isOnline" -> true;
+            case "isValid" -> false;
+            default -> defaultInvocation(instance, method, arguments);
+        });
+        List<String> invoked = new ArrayList<>();
+        assertTrue(FoliaScheduler.runEntity(plugin, player, () -> invoked.add("task"),
+            1L, () -> invoked.add("retired")));
+        schedulerHandler.tasks.forEach(Runnable::run);
+        assertEquals(List.of("retired"), invoked);
     }
 
     @Test
@@ -169,10 +188,10 @@ public class FoliaSchedulerTest {
     public void connectedPlayerStillHonorsNativeSchedulerRetirement() {
         Entity player = playerEntity((instance, method, arguments) -> switch (method.getName()) {
             case "getScheduler" -> retiredEntityScheduler();
-            case "getUniqueId" -> UUID.fromString("55555555-5555-5555-5555-555555555555");
-            case "isOnline" -> true;
+            case "getUniqueId" -> PLAYER_ID;
             default -> defaultInvocation(instance, method, arguments);
         });
+        connectedPlayers.put(PLAYER_ID, player);
         List<String> invoked = new ArrayList<>();
         assertFalse(FoliaScheduler.runEntity(plugin, player, () -> invoked.add("task"),
             1L, () -> invoked.add("retired")));
@@ -370,13 +389,14 @@ public class FoliaSchedulerTest {
         });
     }
 
-    private static Entity playerWithoutWorldEntity(AtomicBoolean online) {
-        return playerEntity((instance, method, arguments) -> switch (method.getName()) {
-            case "getUniqueId" -> UUID.fromString("55555555-5555-5555-5555-555555555555");
-            case "isOnline" -> online.get();
+    private Entity connectedPlayerWithoutWorldEntity() {
+        Entity player = playerEntity((instance, method, arguments) -> switch (method.getName()) {
+            case "getUniqueId" -> PLAYER_ID;
             case "isValid" -> false;
             default -> defaultInvocation(instance, method, arguments);
         });
+        connectedPlayers.put(PLAYER_ID, player);
+        return player;
     }
 
     private static Entity playerEntity(InvocationHandler handler) {
