@@ -1,5 +1,6 @@
 package art.arcane.volmlib.nativelib.terrain.feature;
 
+import art.arcane.volmlib.nativelib.terrain.NativeBlockChangeSet;
 import art.arcane.volmlib.nativelib.terrain.NativeBlockPositionPredicate;
 import java.util.List;
 import java.util.Set;
@@ -13,6 +14,8 @@ public interface NativeImportedFeaturePolicy<D> {
     Set<String> visibleBiomeKeys();
     List<DerivativeGroup> customBiomeDerivatives();
     Placement placement();
+    NativeBlockChangeSet trackedBlockPositions(NativeBlockChangeSet.Bounds bounds);
+    void invalidateBlockChanges(NativeBlockChangeSet changes);
     void info(String message);
     void warn(String message);
     void error(String message, Throwable cause);

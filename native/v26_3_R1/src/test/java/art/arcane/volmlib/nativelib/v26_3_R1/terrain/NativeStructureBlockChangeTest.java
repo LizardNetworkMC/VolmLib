@@ -61,7 +61,7 @@ public class NativeStructureBlockChangeTest {
         NativeBlockChangeSet changes = NativeBlockChangeSet.create(
                 NativeStructureWorldgenAccess.changeBounds(delegate, center()));
         WorldGenLevel world = NativeStructureWorldgenAccess.create(delegate, center(),
-                (x, z) -> ORIGINAL_SURFACE_Y + 1, (x, z) -> ORIGINAL_SURFACE_Y + 1, false,
+                (x, z) -> ORIGINAL_SURFACE_Y + 1, (x, z) -> ORIGINAL_SURFACE_Y + 1, false, true,
                 position -> false, changes);
 
         NativeStructureSurfaceFitter.prepareSurfaceStructures(world, new BoundingBox(0, 0, 0, 0, 127, 0),
@@ -88,7 +88,7 @@ public class NativeStructureBlockChangeTest {
         NativeBlockChangeSet changes = NativeBlockChangeSet.create(
                 NativeStructureWorldgenAccess.changeBounds(delegate, center()));
         NativeStructureWorldgenAccess world = NativeStructureWorldgenAccess.create(delegate, center(),
-                (x, z) -> 64, (x, z) -> 64, false, protectedPosition::equals, changes);
+                (x, z) -> 64, (x, z) -> 64, false, true, protectedPosition::equals, changes);
 
         assertFalse(world.setBlock(protectedPosition, Blocks.STONE.defaultBlockState(), 2));
         world.recordBlockChange(protectedPosition.getX(), protectedPosition.getY(), protectedPosition.getZ());

@@ -67,6 +67,7 @@ public final class NativeStructureWorldgenAccess implements WorldGenLevel, Nativ
     private static final NativeStructurePoiUpdates POI_UPDATES = NativeStructurePoiUpdates.create();
 
     private final WorldGenLevel delegate;
+    private final boolean guarded;
     private final ChunkPos generationCenter;
     private final IntBinaryOperator surfaceFirstFreeY;
     private final IntBinaryOperator floorFirstFreeY;
@@ -90,6 +91,7 @@ public final class NativeStructureWorldgenAccess implements WorldGenLevel, Nativ
         this.floorFirstFreeY = Objects.requireNonNull(
                 boundary.floorFirstFreeY(), "Native structure world access requires an ocean-floor resolver");
         this.virtualizeHeights = boundary.virtualizeHeights();
+        this.guarded = boundary.guarded();
         this.protectedPosition = Objects.requireNonNull(
                 boundary.protectedPosition(), "World access requires a protected-position predicate");
         BlockPos biomeSample = generationCenter.getMiddleBlockPosition(delegate.getSeaLevel());
@@ -114,11 +116,11 @@ public final class NativeStructureWorldgenAccess implements WorldGenLevel, Nativ
     public static NativeStructureWorldgenAccess create(WorldGenLevel delegate, ChunkPos generationCenter,
                                                 IntBinaryOperator surfaceFirstFreeY,
                                                 IntBinaryOperator floorFirstFreeY,
-                                                boolean virtualizeHeights,
+                                                boolean virtualizeHeights, boolean guarded,
                                                 Predicate<BlockPos> protectedPosition,
                                                 NativeBlockChangeSet blockChanges) {
         return new NativeStructureWorldgenAccess(delegate, new Boundary(
-                generationCenter, surfaceFirstFreeY, floorFirstFreeY, virtualizeHeights, protectedPosition,
+                generationCenter, surfaceFirstFreeY, floorFirstFreeY, virtualizeHeights, guarded, protectedPosition,
                 blockChanges));
     }
 
@@ -503,12 +505,12 @@ public final class NativeStructureWorldgenAccess implements WorldGenLevel, Nativ
     }
 
     private boolean isReadable(BlockPos position) {
-        return isInsideGenerationRegion(position.getX() >> 4, position.getZ() >> 4)
+        return !guarded || isInsideGenerationRegion(position.getX() >> 4, position.getZ() >> 4)
                 && !isOutsideBuildHeight(position);
     }
 
     private boolean isWritable(BlockPos position) {
-        return isReadable(position) && !protectedPosition.test(position);
+        return !guarded || isReadable(position) && !protectedPosition.test(position);
     }
 
     private boolean isWritableNeighbourhood(BlockPos position) {
@@ -522,6 +524,9 @@ public final class NativeStructureWorldgenAccess implements WorldGenLevel, Nativ
     }
 
     private AABB boundedArea(AABB area) {
+        if (!guarded) {
+            return area;
+        }
         double minX = Math.max(area.minX, generationBounds.minX);
         double minY = Math.max(area.minY, generationBounds.minY);
         double minZ = Math.max(area.minZ, generationBounds.minZ);
@@ -539,7 +544,7 @@ public final class NativeStructureWorldgenAccess implements WorldGenLevel, Nativ
     }
 
     public boolean isInsideGenerationRegion(int chunkX, int chunkZ) {
-        return Math.abs(chunkX - generationCenter.x()) <= WRITE_RADIUS
+        return !guarded || Math.abs(chunkX - generationCenter.x()) <= WRITE_RADIUS
                 && Math.abs(chunkZ - generationCenter.z()) <= WRITE_RADIUS;
     }
 
@@ -600,7 +605,7 @@ public final class NativeStructureWorldgenAccess implements WorldGenLevel, Nativ
     private record Boundary(ChunkPos generationCenter,
                             IntBinaryOperator surfaceFirstFreeY,
                             IntBinaryOperator floorFirstFreeY,
-                            boolean virtualizeHeights,
+                            boolean virtualizeHeights, boolean guarded,
                             Predicate<BlockPos> protectedPosition,
                             NativeBlockChangeSet blockChanges) {
     }

@@ -461,61 +461,72 @@ public final class NativeBukkitStructureStage<C, D, P extends StructureStartPlan
         }
         NativeStructureWorldgenAccess boundedWorld = NativeStructureWorldgenAccess.create(
                 world, chunkPos, hostWorldgenSurfaceHeight(), hostWorldgenFloorHeight(),
-                policy.stacked(policy.current()),
+                policy.stacked(policy.current()), true,
                 protectedPosition, blockChanges);
+        Throwable placementFailure = null;
         try {
-            NativeStructureVegetationClearer.clearIntersectingVegetation(
-                    boundedWorld, chunk, area, vegetationTargets);
-        } catch (Throwable error) {
-            throw NativeStructureGenerationException.failure(
-                    "vegetation cleanup", nativeStructureBatchContext(placementGroups),
-                    chunkPos.x(), chunkPos.z(), error);
-        }
-        NativeStructureSurfaceFitter.SurfaceTerrainPlan surfaceTerrainPlan;
-        try {
-            surfaceTerrainPlan = NativeStructureSurfaceFitter.prepareSurfaceStructures(
-                    boundedWorld, area, terrainTargets,
-                    policy.surfaceHeight(policy.current()));
-            surfaceTerrainPlan.primeHeightmaps(chunk);
-        } catch (Throwable error) {
-            throw NativeStructureGenerationException.failure(
-                    "terrain integration", nativeStructureBatchContext(placementGroups),
-                    chunkPos.x(), chunkPos.z(), error);
-        }
-        try {
-            NativeStructurePostProcessor.prepareTerrain(
-                    boundedWorld, area, terrainTargets, this::resolvePaletteBlock);
-        } catch (Throwable error) {
-            throw NativeStructureGenerationException.failure(
-                    "terrain preparation", nativeStructureBatchContext(placementGroups),
-                    chunkPos.x(), chunkPos.z(), error);
-        }
-        for (NativePlacementGroup group : placementGroups) {
-            random.setFeatureSeed(decoSeed, group.featureIndex(), group.step());
             try {
-                for (NativePlacement placement : group.placements()) {
-                    placeVanillaStructure(boundedWorld, structureManager, random, area, chunkPos,
-                            group.structureId(), placement.start(), placement.decision());
-                }
+                NativeStructureVegetationClearer.clearIntersectingVegetation(
+                        boundedWorld, chunk, area, vegetationTargets);
             } catch (Throwable error) {
                 throw NativeStructureGenerationException.failure(
-                        "placement", group.structureId(), chunkPos.x(), chunkPos.z(), error);
+                        "vegetation cleanup", nativeStructureBatchContext(placementGroups),
+                        chunkPos.x(), chunkPos.z(), error);
             }
-        }
-        try {
-            NativeStructureSurfaceFitter.repairVacuumFoundations(
-                    boundedWorld, area, surfaceTerrainPlan);
+            NativeStructureSurfaceFitter.SurfaceTerrainPlan surfaceTerrainPlan;
+            try {
+                surfaceTerrainPlan = NativeStructureSurfaceFitter.prepareSurfaceStructures(
+                        boundedWorld, area, terrainTargets,
+                        policy.surfaceHeight(policy.current()));
+                surfaceTerrainPlan.primeHeightmaps(chunk);
+            } catch (Throwable error) {
+                throw NativeStructureGenerationException.failure(
+                        "terrain integration", nativeStructureBatchContext(placementGroups),
+                        chunkPos.x(), chunkPos.z(), error);
+            }
+            try {
+                NativeStructurePostProcessor.prepareTerrain(
+                        boundedWorld, area, terrainTargets, this::resolvePaletteBlock);
+            } catch (Throwable error) {
+                throw NativeStructureGenerationException.failure(
+                        "terrain preparation", nativeStructureBatchContext(placementGroups),
+                        chunkPos.x(), chunkPos.z(), error);
+            }
+            for (NativePlacementGroup group : placementGroups) {
+                random.setFeatureSeed(decoSeed, group.featureIndex(), group.step());
+                try {
+                    for (NativePlacement placement : group.placements()) {
+                        placeVanillaStructure(boundedWorld, structureManager, random, area, chunkPos,
+                                group.structureId(), placement.start(), placement.decision());
+                    }
+                } catch (Throwable error) {
+                    throw NativeStructureGenerationException.failure(
+                            "placement", group.structureId(), chunkPos.x(), chunkPos.z(), error);
+                }
+            }
+            try {
+                NativeStructureSurfaceFitter.repairVacuumFoundations(
+                        boundedWorld, area, surfaceTerrainPlan);
+            } catch (Throwable error) {
+                throw NativeStructureGenerationException.failure(
+                        "foundation repair", nativeStructureBatchContext(placementGroups),
+                        chunkPos.x(), chunkPos.z(), error);
+            }
         } catch (Throwable error) {
-            throw NativeStructureGenerationException.failure(
-                    "foundation repair", nativeStructureBatchContext(placementGroups),
-                    chunkPos.x(), chunkPos.z(), error);
-        }
-        try {
-            policy.invalidateBlockChanges(policy.current(), blockChanges);
-        } catch (Throwable error) {
-            throw NativeStructureGenerationException.failure(
-                    "deferred record invalidation", nativeStructureBatchContext(placementGroups),
-                    chunkPos.x(), chunkPos.z(), error);
+            placementFailure = error;
+            throw error;
+        } finally {
+            try {
+                policy.invalidateBlockChanges(policy.current(), blockChanges);
+            } catch (Throwable error) {
+                NativeStructureGenerationException invalidationFailure = NativeStructureGenerationException.failure(
+                        "deferred record invalidation", nativeStructureBatchContext(placementGroups),
+                        chunkPos.x(), chunkPos.z(), error);
+                if (placementFailure == null) {
+                    throw invalidationFailure;
+                }
+                placementFailure.addSuppressed(invalidationFailure);
+            }
         }
     }
 
