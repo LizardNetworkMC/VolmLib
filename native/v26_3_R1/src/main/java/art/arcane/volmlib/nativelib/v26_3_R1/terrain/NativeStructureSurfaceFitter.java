@@ -9,6 +9,7 @@ import art.arcane.volmlib.nativelib.v26_3_R1.terrain.NativeStructureReflection;
 import art.arcane.volmlib.nativelib.v26_3_R1.terrain.WorldgenTerrainHeightmaps;
 
 
+import art.arcane.volmlib.nativelib.terrain.NativeBlockChangeRecorder;
 import art.arcane.volmlib.nativelib.terrain.structure.StructureTerrainSettings;
 import art.arcane.volmlib.util.structure.StructureTerrainMode;
 
@@ -1070,6 +1071,7 @@ public final class NativeStructureSurfaceFitter {
         for (int y = originalY + 1; y <= worldMaxY; y++) {
             BlockState state = world.getBlockState(position.set(x, y, z));
             if (state.isAir()) {
+                recordTerminatingAir(world, x, y, z);
                 return air;
             }
             if (!state.getFluidState().isEmpty()) {
@@ -1085,6 +1087,12 @@ public final class NativeStructureSurfaceFitter {
             world.setBlock(position, air, 2);
         }
         return air;
+    }
+
+    private static void recordTerminatingAir(WorldGenLevel world, int x, int y, int z) {
+        if (world instanceof NativeBlockChangeRecorder recorder) {
+            recorder.recordBlockChange(x, y, z);
+        }
     }
 
     private static SurfaceMaterials resolveSurfaceMaterials(WorldGenLevel world,

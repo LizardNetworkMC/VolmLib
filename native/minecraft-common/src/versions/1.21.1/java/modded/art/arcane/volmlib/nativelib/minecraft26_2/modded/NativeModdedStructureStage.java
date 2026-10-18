@@ -38,6 +38,7 @@ import art.arcane.volmlib.nativelib.minecraft26_2.terrain.NativeStructureVegetat
 import art.arcane.volmlib.nativelib.minecraft26_2.terrain.NativeStructureVerticalPlacer;
 import art.arcane.volmlib.nativelib.minecraft26_2.terrain.NativeStructureVolumeSource;
 import art.arcane.volmlib.nativelib.minecraft26_2.terrain.WorldgenTerrainHeightmaps;
+import art.arcane.volmlib.nativelib.terrain.NativeBlockChangeSet;
 import art.arcane.volmlib.nativelib.terrain.NativeBlockPositionPredicate;
 import art.arcane.volmlib.nativelib.terrain.NativeBlockState;
 import art.arcane.volmlib.nativelib.terrain.StructureLocateProbe;
@@ -401,57 +402,91 @@ public final class NativeModdedStructureStage<C, P extends StructureStartPlan, O
                     chunkPos.x, chunkPos.z, error);
         }
         Predicate<BlockPos> protectedPosition = NativeGenerationWriteGuard.protectedPositions(policy.protectedPositions(current));
-        WorldGenLevel boundedWorld = ModdedNativeStructureWorldgenAccess.create(
+        NativeBlockChangeSet blockChanges;
+        try {
+            blockChanges = trackBlockChanges(current, world, chunkPos, placementGroups);
+        } catch (Throwable error) {
+            throw NativeStructureGenerationException.failure(
+                    "block change tracking", nativeStructureBatchContext(placementGroups),
+                    chunkPos.x, chunkPos.z, error);
+        }
+        ModdedNativeStructureWorldgenAccess boundedWorld = ModdedNativeStructureWorldgenAccess.create(
                 world, chunkPos, worldgenSurfaceHeight(current, world.getMinBuildHeight()), worldgenFloorHeight(current, world.getMinBuildHeight()),
-                policy.stacked(current),
-                protectedPosition);
+                policy.stacked(current), true,
+                protectedPosition, blockChanges);
+        Throwable placementFailure = null;
         try {
-            NativeStructureVegetationClearer.clearIntersectingVegetation(
-                    boundedWorld, chunk, area, vegetationTargets);
-        } catch (Throwable error) {
-            throw NativeStructureGenerationException.failure(
-                    "vegetation cleanup", nativeStructureBatchContext(placementGroups),
-                    chunkPos.x, chunkPos.z, error);
-        }
-        NativeStructureSurfaceFitter.SurfaceTerrainPlan surfaceTerrainPlan;
-        try {
-            surfaceTerrainPlan = NativeStructureSurfaceFitter.prepareSurfaceStructures(
-                    boundedWorld, area, terrainTargets,
-                    policy.surfaceHeight(current));
-            surfaceTerrainPlan.primeHeightmaps(chunk);
-        } catch (Throwable error) {
-            throw NativeStructureGenerationException.failure(
-                    "terrain integration", nativeStructureBatchContext(placementGroups),
-                    chunkPos.x, chunkPos.z, error);
-        }
-        try {
-            NativeStructurePostProcessor.prepareTerrain(
-                    boundedWorld, area, terrainTargets, this::resolvePaletteBlock);
-        } catch (Throwable error) {
-            throw NativeStructureGenerationException.failure(
-                    "terrain preparation", nativeStructureBatchContext(placementGroups),
-                    chunkPos.x, chunkPos.z, error);
-        }
-        for (NativePlacementGroup group : placementGroups) {
-            random.setFeatureSeed(decorationSeed, group.featureIndex(), group.step());
             try {
-                for (NativePlacement placement : group.placements()) {
-                    placeVanillaStructure(boundedWorld, structureManager, random, area, chunkPos,
-                            group.structureId(), placement.start(), placement.decision());
-                }
+                NativeStructureVegetationClearer.clearIntersectingVegetation(
+                        boundedWorld, chunk, area, vegetationTargets);
             } catch (Throwable error) {
                 throw NativeStructureGenerationException.failure(
-                        "placement", group.structureId(), chunkPos.x, chunkPos.z, error);
+                        "vegetation cleanup", nativeStructureBatchContext(placementGroups),
+                        chunkPos.x, chunkPos.z, error);
+            }
+            NativeStructureSurfaceFitter.SurfaceTerrainPlan surfaceTerrainPlan;
+            try {
+                surfaceTerrainPlan = NativeStructureSurfaceFitter.prepareSurfaceStructures(
+                        boundedWorld, area, terrainTargets,
+                        policy.surfaceHeight(current));
+                surfaceTerrainPlan.primeHeightmaps(chunk);
+            } catch (Throwable error) {
+                throw NativeStructureGenerationException.failure(
+                        "terrain integration", nativeStructureBatchContext(placementGroups),
+                        chunkPos.x, chunkPos.z, error);
+            }
+            try {
+                NativeStructurePostProcessor.prepareTerrain(
+                        boundedWorld, area, terrainTargets, this::resolvePaletteBlock);
+            } catch (Throwable error) {
+                throw NativeStructureGenerationException.failure(
+                        "terrain preparation", nativeStructureBatchContext(placementGroups),
+                        chunkPos.x, chunkPos.z, error);
+            }
+            for (NativePlacementGroup group : placementGroups) {
+                random.setFeatureSeed(decorationSeed, group.featureIndex(), group.step());
+                try {
+                    for (NativePlacement placement : group.placements()) {
+                        placeVanillaStructure(boundedWorld, structureManager, random, area, chunkPos,
+                                group.structureId(), placement.start(), placement.decision());
+                    }
+                } catch (Throwable error) {
+                    throw NativeStructureGenerationException.failure(
+                            "placement", group.structureId(), chunkPos.x, chunkPos.z, error);
+                }
+            }
+            try {
+                NativeStructureSurfaceFitter.repairVacuumFoundations(
+                        boundedWorld, area, surfaceTerrainPlan);
+            } catch (Throwable error) {
+                throw NativeStructureGenerationException.failure(
+                        "foundation repair", nativeStructureBatchContext(placementGroups),
+                        chunkPos.x, chunkPos.z, error);
+            }
+        } catch (Throwable error) {
+            placementFailure = error;
+            throw error;
+        } finally {
+            try {
+                policy.invalidateBlockChanges(current, blockChanges);
+            } catch (Throwable error) {
+                NativeStructureGenerationException invalidationFailure = NativeStructureGenerationException.failure(
+                        "deferred record invalidation", nativeStructureBatchContext(placementGroups),
+                        chunkPos.x, chunkPos.z, error);
+                if (placementFailure == null) {
+                    throw invalidationFailure;
+                }
+                placementFailure.addSuppressed(invalidationFailure);
             }
         }
-        try {
-            NativeStructureSurfaceFitter.repairVacuumFoundations(
-                    boundedWorld, area, surfaceTerrainPlan);
-        } catch (Throwable error) {
-            throw NativeStructureGenerationException.failure(
-                    "foundation repair", nativeStructureBatchContext(placementGroups),
-                    chunkPos.x, chunkPos.z, error);
+    }
+
+    private NativeBlockChangeSet trackBlockChanges(C current, WorldGenLevel world, ChunkPos chunkPos,
+                                                   List<NativePlacementGroup> placementGroups) {
+        if (placementGroups.isEmpty()) {
+            return NativeBlockChangeSet.disabled();
         }
+        return policy.trackBlockChanges(current, ModdedNativeStructureWorldgenAccess.changeBounds(world, chunkPos));
     }
 
     public static void visitExistingPois(ChunkAccess chunk, BiConsumer<BlockPos, BlockState> visitor) {
@@ -481,22 +516,15 @@ public final class NativeModdedStructureStage<C, P extends StructureStartPlan, O
         return ordered;
     }
 
-    private void placeVanillaStructure(WorldGenLevel world, StructureManager structureManager,
+    private void placeVanillaStructure(ModdedNativeStructureWorldgenAccess world, StructureManager structureManager,
                                        WorldgenRandom random, BoundingBox area, ChunkPos chunkPos,
                                        String structureId, StructureStart start,
                                        StructurePlacementDecision decision) {
         C current = policy.current();
-        WorldGenLevel boundedWorld = world instanceof ModdedNativeStructureWorldgenAccess ? world : ModdedNativeStructureWorldgenAccess.create(
-                world,
-                chunkPos,
-                worldgenSurfaceHeight(current, world.getMinBuildHeight()),
-                worldgenFloorHeight(current, world.getMinBuildHeight()),
-                policy.stacked(current),
-                NativeGenerationWriteGuard.protectedPositions(policy.protectedPositions(current)));
         world.setCurrentlyGenerating(() -> policy.generationLabel(structureId));
         try {
             NativeStructurePostProcessor.place(
-                    boundedWorld, structureManager, generator, random, area, chunkPos,
+                    world, structureManager, generator, random, area, chunkPos,
                     structureId, start, decision, this::resolvePaletteBlock,
                     policy.surfaceHeight(current));
         } finally {

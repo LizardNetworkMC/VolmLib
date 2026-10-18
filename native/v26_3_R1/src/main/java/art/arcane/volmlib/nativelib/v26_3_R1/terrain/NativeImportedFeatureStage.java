@@ -41,6 +41,9 @@ import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.IntBinaryOperator;
 import java.util.Objects;
+import art.arcane.volmlib.nativelib.terrain.NativeBlockChangeSet;
+import art.arcane.volmlib.nativelib.terrain.NativeBlockChangeSnapshot;
+import net.minecraft.world.level.block.Block;
 import art.arcane.volmlib.nativelib.terrain.feature.NativeImportedFeatureControl;
 import art.arcane.volmlib.nativelib.terrain.feature.NativeImportedFeaturePolicy;
 
@@ -308,10 +311,21 @@ public final class NativeImportedFeatureStage<D> {
         IntBinaryOperator floorFirstFreeY = placement.stacked()
                 ? placement.floorFirstFreeY()
                 : (x, z) -> level.getHeight(Heightmap.Types.OCEAN_FLOOR_WG, x, z);
-        WorldGenLevel placementLevel = !placement.guarded() ? level : NativeStructureWorldgenAccess.create(
-                level, centerPos, surfaceFirstFreeY, floorFirstFreeY, placement.stacked(),
-                position -> placement.protectedPosition().test(position.getX(), position.getY(), position.getZ()));
+        NativeBlockChangeSet trackedPositions = policy.trackedBlockPositions(
+                NativeStructureWorldgenAccess.changeBounds(level, centerPos));
+        NativeBlockChangeSet blockChanges = trackedPositions.isEmpty() ? NativeBlockChangeSet.disabled()
+                : NativeBlockChangeSet.create(trackedPositions.bounds());
+        NativeBlockChangeSnapshot<Block> snapshot = trackedPositions.isEmpty() ? null
+                : NativeBlockChangeSnapshot.capture(trackedPositions,
+                (x, y, z) -> level.getBlockState(new BlockPos(x, y, z)).getBlock());
+        WorldGenLevel placementLevel = !placement.guarded() && blockChanges == NativeBlockChangeSet.disabled()
+                ? level : NativeStructureWorldgenAccess.create(
+                level, centerPos, surfaceFirstFreeY, floorFirstFreeY, placement.stacked(), placement.guarded(),
+                position -> placement.guarded()
+                        && placement.protectedPosition().test(position.getX(), position.getY(), position.getZ()),
+                blockChanges);
 
+        IllegalStateException placementFailure = null;
         try {
             for (int stepIndex = 0; stepIndex < steps.size(); stepIndex++) {
                 if (!table.control().shouldGenerateStepOrdinal(stepIndex)) {
@@ -321,10 +335,26 @@ public final class NativeImportedFeatureStage<D> {
                         random, decorationSeed, origin, stepIndex);
             }
         } catch (Throwable error) {
-            throw new IllegalStateException("imported feature placement failed for chunk "
+            placementFailure = new IllegalStateException("imported feature placement failed for chunk "
                     + centerPos.x() + "," + centerPos.z(), error);
+            throw placementFailure;
         } finally {
-            level.setCurrentlyGenerating(null);
+            try {
+                try {
+                    if (snapshot != null) {
+                        snapshot.collectChanges(blockChanges, (x, y, z) -> level.getBlockState(new BlockPos(x, y, z)).getBlock());
+                    }
+                } finally {
+                    policy.invalidateBlockChanges(blockChanges);
+                }
+            } catch (Throwable error) {
+                if (placementFailure == null) {
+                    throw error;
+                }
+                placementFailure.addSuppressed(error);
+            } finally {
+                level.setCurrentlyGenerating(null);
+            }
         }
     }
 
