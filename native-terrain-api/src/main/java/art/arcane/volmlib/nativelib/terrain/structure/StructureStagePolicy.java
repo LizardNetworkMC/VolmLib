@@ -1,5 +1,6 @@
 package art.arcane.volmlib.nativelib.terrain.structure;
 
+import art.arcane.volmlib.nativelib.terrain.NativeBlockChangeSet;
 import art.arcane.volmlib.nativelib.terrain.NativeBlockPositionPredicate;
 import art.arcane.volmlib.nativelib.terrain.NativeBlockState;
 import art.arcane.volmlib.util.math.RNG;
@@ -19,6 +20,8 @@ public interface StructureStagePolicy<C, P extends StructureStartPlan, O extends
     boolean historicalStructure(C context, long activation);
     boolean stacked(C context);
     NativeBlockPositionPredicate protectedPositions(C context);
+    NativeBlockChangeSet trackBlockChanges(C context, NativeBlockChangeSet.Bounds bounds);
+    void invalidateBlockChanges(C context, NativeBlockChangeSet changes);
     IntBinaryOperator surfaceHeight(C context);
     IntBinaryOperator worldgenHeight(C context, int runtimeMinY, boolean floor);
     NativeBlockState paletteBlock(StructurePalette palette, RNG rng, int x, int y, int z);
