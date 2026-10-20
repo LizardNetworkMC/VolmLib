@@ -8,8 +8,24 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class ReflectiveChunkPacketAccessTest {
+    @Test
+    void rawSnapshotsRejectActiveChunkTransformationControllers() throws ReflectiveOperationException {
+        assertTrue(ReflectiveChunkPacketAccess.unmodifiedSnapshotAllowed(new UnfilteredWorld()));
+        assertTrue(ReflectiveChunkPacketAccess.unmodifiedSnapshotAllowed(new ControlledWorld(SampleController.NO_OPERATION_INSTANCE)));
+        assertFalse(ReflectiveChunkPacketAccess.unmodifiedSnapshotAllowed(new ControlledWorld(new SampleController())));
+    }
+
+    @Test
+    void capturedPacketReadinessMustFinishBeforeRawEncoding() throws ReflectiveOperationException {
+        assertTrue(ReflectiveChunkPacketAccess.packetReady(new VanillaPacket()));
+        assertFalse(ReflectiveChunkPacketAccess.packetReady(new DelayedPacket(false)));
+        assertTrue(ReflectiveChunkPacketAccess.packetReady(new DelayedPacket(true)));
+    }
+
     @Test
     void everyChunkInABurstReusesTheAlreadyResolvedNmsMembersInsteadOfRewalkingTheHierarchy() {
         ReflectiveChunkPacketAccess delivery =
@@ -56,6 +72,28 @@ class ReflectiveChunkPacketAccessTest {
         Object getHandle() {
             return this;
         }
+    }
+
+    private static final class UnfilteredWorld {
+    }
+
+    private static final class SampleController {
+        public static final SampleController NO_OPERATION_INSTANCE = new SampleController();
+    }
+
+    private static final class ControlledWorld {
+        public final SampleController chunkPacketBlockController;
+
+        private ControlledWorld(SampleController controller) {
+            chunkPacketBlockController = controller;
+        }
+    }
+
+    private static final class VanillaPacket {
+    }
+
+    private record DelayedPacket(boolean ready) {
+        public boolean isReady() { return ready; }
     }
 
     private static final class SampleConnectionOwner {

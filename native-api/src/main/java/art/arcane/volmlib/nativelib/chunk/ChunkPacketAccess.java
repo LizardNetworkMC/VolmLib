@@ -12,6 +12,10 @@ public interface ChunkPacketAccess {
 
     boolean sendChunk(Player player, World world, int chunkX, int chunkZ) throws ReflectiveOperationException;
 
+    default Optional<PreparedChunkPacket> prepare(World world, ChunkPosition position) throws ReflectiveOperationException {
+        return Optional.empty();
+    }
+
     default boolean snapshotSupported() {
         return false;
     }
@@ -21,6 +25,10 @@ public interface ChunkPacketAccess {
     }
 
     default Optional<ChunkPacketSnapshot> snapshot(World world, ChunkPosition position) {
+        return Optional.empty();
+    }
+
+    default Optional<String> registryFingerprint(World world) {
         return Optional.empty();
     }
 }

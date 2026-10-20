@@ -1,6 +1,9 @@
 package art.arcane.volmlib.nativelib.common.chunk;
 
 import art.arcane.volmlib.nativelib.chunk.ChunkPacketAccess;
+import art.arcane.volmlib.nativelib.chunk.ChunkPosition;
+import art.arcane.volmlib.nativelib.chunk.PreparedChunkPacket;
+import io.netty.channel.ChannelFutureListener;
 
 import org.bukkit.World;
 import org.bukkit.entity.Player;
@@ -8,6 +11,10 @@ import org.bukkit.entity.Player;
 import java.lang.reflect.Constructor;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
+import java.util.Optional;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionStage;
+import java.util.concurrent.CancellationException;
 
 public class ReflectiveChunkPacketAccess implements ChunkPacketAccess {
     private static final String CHUNK_PACKET_CLASS =
@@ -39,6 +46,7 @@ public class ReflectiveChunkPacketAccess implements ChunkPacketAccess {
     private final NmsMemberCache<Method> lightEngines;
     private final NmsMemberCache<Field> connections;
     private final NmsMemberCache<Method> senders;
+    private final NmsMemberCache<Method> completionSenders;
     private final NmsMemberCache.Resolver<Method> senderResolver;
     private volatile PacketConstructorSelection packetConstructorSelection;
 
@@ -57,12 +65,54 @@ public class ReflectiveChunkPacketAccess implements ChunkPacketAccess {
         this.lightEngines = new NmsMemberCache<>();
         this.connections = new NmsMemberCache<>();
         this.senders = new NmsMemberCache<>();
+        this.completionSenders = new NmsMemberCache<>();
         this.senderResolver = owner -> findSend(owner, packetClass);
     }
 
     @Override
     public boolean supported() {
         return packetClass != null;
+    }
+
+    @Override
+    public Optional<PreparedChunkPacket> prepare(World world, ChunkPosition position) throws ReflectiveOperationException {
+        Object serverLevel = invoke(worldHandles.get(world.getClass(), HANDLE_RESOLVER), world);
+        if (serverLevel == null || packetClass == null) {
+            return Optional.empty();
+        }
+        Object chunk = lookupChunk(serverLevel, position.x(), position.z());
+        Method lightEngine = lightEngines.get(serverLevel.getClass(), LIGHT_ENGINE_RESOLVER);
+        if (chunk == null || lightEngine == null) {
+            return Optional.empty();
+        }
+        Object packet = buildPacket(chunk, lightEngine.invoke(serverLevel));
+        return packet == null ? Optional.empty() : Optional.of(new CapturedPacket(packet));
+    }
+
+    protected static boolean unmodifiedSnapshotAllowed(Object world) throws ReflectiveOperationException {
+        Field controllerField = findField(world.getClass(), "chunkPacketBlockController");
+        if (controllerField == null) {
+            return true;
+        }
+        Object controller = controllerField.get(world);
+        if (controller == null) {
+            return false;
+        }
+        Field noop = findField(controller.getClass(), "NO_OPERATION_INSTANCE");
+        return noop != null && noop.get(null) == controller;
+    }
+
+    protected static boolean packetReady(Object packet) throws ReflectiveOperationException {
+        Method ready = findMethod(packet.getClass(), "isReady");
+        return ready == null || Boolean.TRUE.equals(ready.invoke(packet));
+    }
+
+    protected static boolean snapshotSafe(Object world, Object packet) {
+        try {
+            return unmodifiedSnapshotAllowed(world) && packetReady(packet);
+        } catch (ReflectiveOperationException failure) {
+            throw new IllegalStateException("Could not verify native chunk snapshot protection", failure);
+        }
     }
 
     @Override
@@ -141,7 +191,7 @@ public class ReflectiveChunkPacketAccess implements ChunkPacketAccess {
             return null;
         }
         Object[] arguments = selection.fiveParameters
-            ? new Object[]{levelChunk, lightEngine, null, null, Boolean.FALSE}
+            ? new Object[]{levelChunk, lightEngine, null, null, Boolean.TRUE}
             : new Object[]{levelChunk, lightEngine, null, null};
         return selected.newInstance(arguments);
     }
@@ -197,6 +247,34 @@ public class ReflectiveChunkPacketAccess implements ChunkPacketAccess {
                 }
                 field.setAccessible(true);
                 return field;
+            }
+        }
+        return null;
+    }
+
+    private static Field findField(Class<?> owner, String name) {
+        for (Class<?> type = owner; type != null; type = type.getSuperclass()) {
+            try {
+                Field field = type.getDeclaredField(name);
+                field.setAccessible(true);
+                return field;
+            } catch (NoSuchFieldException absent) {
+                continue;
+            }
+        }
+        return null;
+    }
+
+    private Method findCompletionSend(Class<?> owner) {
+        for (Class<?> type = owner; type != null; type = type.getSuperclass()) {
+            for (Method method : type.getDeclaredMethods()) {
+                Class<?>[] parameters = method.getParameterTypes();
+                if ((method.getName().equals("send") || method.getName().equals("sendPacket"))
+                    && parameters.length == 2 && parameters[0].isAssignableFrom(packetClass)
+                    && parameters[1] == ChannelFutureListener.class) {
+                    method.setAccessible(true);
+                    return method;
+                }
             }
         }
         return null;
@@ -297,5 +375,49 @@ public class ReflectiveChunkPacketAccess implements ChunkPacketAccess {
         Constructor<?> constructor,
         boolean fiveParameters
     ) {
+    }
+
+    private final class CapturedPacket implements PreparedChunkPacket {
+        private final Object packet;
+
+        private CapturedPacket(Object packet) {
+            this.packet = packet;
+        }
+
+        @Override
+        public boolean ready() {
+            try {
+                return packetReady(packet);
+            } catch (ReflectiveOperationException failure) {
+                throw new IllegalStateException("Could not inspect prepared chunk packet readiness", failure);
+            }
+        }
+
+        @Override
+        public CompletionStage<Boolean> send(Player player) {
+            CompletableFuture<Boolean> written = new CompletableFuture<>();
+            try {
+                Object serverPlayer = invoke(playerHandles.get(player.getClass(), HANDLE_RESOLVER), player);
+                Field connectionField = serverPlayer == null ? null : connections.get(serverPlayer.getClass(), CONNECTION_RESOLVER);
+                Object connection = connectionField == null ? null : connectionField.get(serverPlayer);
+                Method send = connection == null ? null : completionSenders.get(connection.getClass(), ReflectiveChunkPacketAccess.this::findCompletionSend);
+                if (send == null || !ready()) {
+                    written.complete(false);
+                    return written;
+                }
+                ChannelFutureListener listener = future -> {
+                    if (future.isSuccess()) {
+                        written.complete(true);
+                    } else {
+                        written.completeExceptionally(future.cause() == null
+                            ? new CancellationException("Chunk packet write cancelled") : future.cause());
+                    }
+                };
+                send.invoke(connection, packet, listener);
+            } catch (ReflectiveOperationException | RuntimeException failure) {
+                written.completeExceptionally(failure);
+            }
+            return written;
+        }
     }
 }

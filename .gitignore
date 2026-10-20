@@ -17,3 +17,5 @@ BUILDS/
 .qa/
 
 shared/native/billow/target/
+
+.kotlin/
