@@ -20,11 +20,17 @@ import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.nio.channels.ClosedByInterruptException;
+import java.nio.file.Files;
+import java.nio.ByteBuffer;
+import java.util.Arrays;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertArrayEquals;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertThrows;
 import static org.junit.Assert.assertTrue;
@@ -66,18 +72,93 @@ public class MantlePlateLoadFailureTest {
 
             assertNull(regionIo.failure.get());
             assertNull(fixture.mantle.getLoadedRegion(0, 0));
+            fixture.now.addAndGet(5_000L);
             assertEquals("kept", fixture.mantle.get(5, 3, 7, String.class));
         }
     }
 
     @Test(timeout = 5_000L)
-    public void corruptPlateStillFallsBackToAFreshPlate() throws Exception {
-        File folder = persistedPlate("corrupt");
-        FileRegionIo regionIo = new FileRegionIo(folder);
-        regionIo.failure.set(new EOFException("truncated plate"));
-        try (Fixture fixture = new Fixture(folder, regionIo)) {
-            assertNull(fixture.mantle.get(5, 3, 7, String.class));
+    public void corruptPlateReadFailsTheAccessAndKeepsThePersistedPlate() throws Exception {
+        assertTransientReadFailureKeepsThePlate(new EOFException("truncated plate"));
+    }
+
+    @Test(timeout = 5_000L)
+    public void emptyPlateIsPreservedAndCannotBecomeAWritableReplacement() throws Exception {
+        File folder = temporaryFolder.newFolder("empty");
+        File plate = Mantle.fileForRegion(folder, 0, 0);
+        Files.createFile(plate.toPath());
+        assertUnavailablePlateIsPreserved(folder, new byte[0]);
+    }
+
+    @Test(timeout = 5_000L)
+    public void truncatedPlateIsPreservedAndCannotBecomeAWritableReplacement() throws Exception {
+        File folder = persistedPlate("truncated");
+        File plate = Mantle.fileForRegion(folder, 0, 0);
+        byte[] truncated = Arrays.copyOf(Files.readAllBytes(plate.toPath()), 12);
+        Files.write(plate.toPath(), truncated);
+        assertUnavailablePlateIsPreserved(folder, truncated);
+    }
+
+    @Test(timeout = 5_000L)
+    public void malformedChunkCannotPublishAPartialWritablePlate() throws Exception {
+        File folder = persistedPlate("malformed-chunk");
+        File plate = Mantle.fileForRegion(folder, 0, 0);
+        byte[] content = Files.readAllBytes(plate.toPath());
+        byte[] malformed = Arrays.copyOf(content, content.length + 1);
+        ByteBuffer buffer = ByteBuffer.wrap(malformed);
+        buffer.putInt(9, buffer.getInt(9) + 1);
+        Files.write(plate.toPath(), malformed);
+        assertUnavailablePlateIsPreserved(folder, malformed);
+    }
+
+    @Test(timeout = 5_000L)
+    public void malformedSectionCannotPublishAPartialWritablePlate() throws Exception {
+        File folder = persistedPlate("malformed-section");
+        File plate = Mantle.fileForRegion(folder, 0, 0);
+        byte[] content = Files.readAllBytes(plate.toPath());
+        boolean corrupted = false;
+        for (int index = 0; index < content.length - 3; index++) {
+            if (content[index] == 'k' && content[index + 1] == 'e'
+                    && content[index + 2] == 'p' && content[index + 3] == 't') {
+                content[index] = (byte) 0xff;
+                corrupted = true;
+                break;
+            }
         }
+        assertTrue(corrupted);
+        Files.write(plate.toPath(), content);
+        assertUnavailablePlateIsPreserved(folder, content);
+    }
+
+    @Test(timeout = 5_000L)
+    public void repeatedUnavailableAccessesUseABoundedRetryAndHealthyRegionsContinue() throws Exception {
+        File folder = persistedPlate("backoff");
+        FileRegionIo regionIo = new FileRegionIo(folder);
+        regionIo.failure.set(new EOFException("unavailable"));
+        try (Fixture fixture = new Fixture(folder, regionIo)) {
+            assertThrows(RuntimeException.class, () -> fixture.mantle.get(5, 3, 7, String.class));
+            for (int attempt = 0; attempt < 100; attempt++) {
+                assertThrows(RuntimeException.class, () -> fixture.mantle.get(5, 3, 7, String.class));
+            }
+            assertEquals(1, regionIo.reads.get());
+            fixture.mantle.set(1_024, 3, 7, "healthy");
+            assertEquals("healthy", fixture.mantle.get(1_024, 3, 7, String.class));
+            fixture.now.addAndGet(5_000L);
+            assertEquals("kept", fixture.mantle.get(5, 3, 7, String.class));
+            assertEquals(2, regionIo.reads.get());
+        }
+    }
+
+    private void assertUnavailablePlateIsPreserved(File folder, byte[] expected) throws Exception {
+        File plate = Mantle.fileForRegion(folder, 0, 0);
+        try (Fixture fixture = new Fixture(folder, new FileRegionIo(folder))) {
+            assertThrows(RuntimeException.class, () -> fixture.mantle.get(5, 3, 7, String.class));
+            assertNull(fixture.mantle.getLoadedRegion(0, 0));
+            assertThrows(RuntimeException.class, () -> fixture.mantle.set(5, 3, 7, "replacement"));
+            assertNull(fixture.mantle.getLoadedRegion(0, 0));
+        }
+        assertTrue(plate.exists());
+        assertArrayEquals(expected, Files.readAllBytes(plate.toPath()));
     }
 
     private void assertTransientReadFailureKeepsThePlate(Throwable failure) throws Exception {
@@ -91,6 +172,7 @@ public class MantlePlateLoadFailureTest {
 
             assertTrue(thrown.toString(), causedBy(thrown, failure));
             assertNull(fixture.mantle.getLoadedRegion(0, 0));
+            fixture.now.addAndGet(5_000L);
             assertEquals("kept", fixture.mantle.get(5, 3, 7, String.class));
         }
         assertEquals(persistedLength, plate.length());
@@ -115,6 +197,7 @@ public class MantlePlateLoadFailureTest {
     }
 
     private static final class Fixture implements AutoCloseable {
+        private final AtomicLong now = new AtomicLong(10_000L);
         private final MultiBurstSupport burst;
         private final art.arcane.volmlib.util.mantle.runtime.Mantle<StringSection> mantle;
 
@@ -134,7 +217,12 @@ public class MantlePlateLoadFailureTest {
                     1_000L
             );
             this.mantle = new art.arcane.volmlib.util.mantle.runtime.Mantle<>(folder, WORLD_HEIGHT, 64,
-                    new HyperLockSupport(), burst, regionIo, ADAPTER, MantleHooks.NONE);
+                    new HyperLockSupport(), burst, regionIo, ADAPTER, MantleHooks.NONE) {
+                @Override
+                protected long nowMillis() {
+                    return now.get();
+                }
+            };
         }
 
         @Override
@@ -147,6 +235,7 @@ public class MantlePlateLoadFailureTest {
     private static final class FileRegionIo implements Mantle.RegionIO<TectonicPlate<StringSection>> {
         private final File folder;
         private final AtomicReference<Throwable> failure = new AtomicReference<>();
+        private final AtomicInteger reads = new AtomicInteger();
 
         private FileRegionIo(File folder) {
             this.folder = folder;
@@ -154,6 +243,7 @@ public class MantlePlateLoadFailureTest {
 
         @Override
         public TectonicPlate<StringSection> read(String name) throws Exception {
+            reads.incrementAndGet();
             Throwable pending = failure.getAndSet(null);
             if (pending instanceof Exception exception) {
                 throw exception;

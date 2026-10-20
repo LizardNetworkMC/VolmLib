@@ -38,6 +38,9 @@ public abstract class MantleChunkSupport<M> extends FlaggedChunk {
             onBeforeReadSection(i);
 
             long size = din.readInt();
+            if (size < 0L) {
+                throw new IOException("Negative mantle section length: " + size);
+            }
             if (size == 0L) {
                 continue;
             }
@@ -53,7 +56,7 @@ public abstract class MantleChunkSupport<M> extends FlaggedChunk {
             } catch (IOException exception) {
                 long end = start + size;
                 onReadSectionFailure(i, start, end, din, exception);
-                din.skipTo(end);
+                throw exception;
             }
 
             if (din.count() != start + size) {

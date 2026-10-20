@@ -60,6 +60,9 @@ public abstract class TectonicPlateSupport<C> {
         int version = versioned ? Varint.readUnsignedVarInt(din) : MISSING;
         for (int i = 0; i < chunks.length(); i++) {
             long size = din.readInt();
+            if (size < 0L) {
+                throw new IOException("Negative mantle chunk length: " + size);
+            }
             if (size == 0) {
                 continue;
             }
@@ -72,15 +75,12 @@ public abstract class TectonicPlateSupport<C> {
                 chunks.set(i, readChunk(version, sectionHeight, din));
                 afterReadChunk(i);
                 if (din.count() != end) {
-                    // A reader that under- or over-consumed its payload poisons every later
-                    // chunk in the plate; contain the damage to this one chunk.
                     throw new IOException("Mantle chunk " + i + " consumed " + (din.count() - start)
                             + " of " + size + " bytes");
                 }
             } catch (Throwable e) {
                 onReadChunkFailure(i, start, end, din, e);
-                din.skipTo(end);
-                addError();
+                throw e;
             }
         }
     }

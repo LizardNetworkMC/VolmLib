@@ -20,41 +20,46 @@ package art.arcane.volmlib.util.mantle.io;
 
 import java.io.IOException;
 import java.nio.channels.FileChannel;
-import java.util.concurrent.Semaphore;
 
 public class Holder {
     private final FileChannel channel;
-    private final Semaphore semaphore;
+    private final IOWorkerSupport.ChannelGate gate;
     private volatile boolean closed;
 
-    public Holder(FileChannel channel, Semaphore semaphore) {
+    Holder(FileChannel channel, IOWorkerSupport.ChannelGate gate) {
         this.channel = channel;
-        this.semaphore = semaphore;
+        this.gate = gate;
     }
 
     public SynchronizedChannel acquire() {
-        semaphore.acquireUninterruptibly();
+        gate.lock.acquireUninterruptibly();
         // An interrupted read closes the FileChannel under the holder (ClosedByInterruptException); report it
         // closed so the cache reopens the file instead of failing every later read of this plate.
         if (closed || !channel.isOpen()) {
             closed = true;
-            semaphore.release();
+            gate.holders.remove(this);
+            gate.lock.release();
             return null;
         }
 
-        return new SynchronizedChannel(channel, semaphore);
+        return new SynchronizedChannel(channel, gate.lock);
     }
 
     public void close() throws IOException {
-        semaphore.acquireUninterruptibly();
+        gate.lock.acquireUninterruptibly();
         try {
-            if (closed) {
-                return;
-            }
-            closed = true;
-            channel.close();
+            closeLocked();
         } finally {
-            semaphore.release();
+            gate.lock.release();
         }
+    }
+
+    void closeLocked() throws IOException {
+        if (closed) {
+            return;
+        }
+        closed = true;
+        gate.holders.remove(this);
+        channel.close();
     }
 }

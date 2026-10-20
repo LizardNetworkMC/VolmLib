@@ -7,10 +7,12 @@ import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.DataOutputStream;
 import java.io.IOException;
+import java.nio.ByteBuffer;
 
 import static org.junit.Assert.assertArrayEquals;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNull;
+import static org.junit.Assert.assertThrows;
 
 public class MantleChunkSerializationTest {
     @Test
@@ -34,6 +36,24 @@ public class MantleChunkSerializationTest {
                     assertEquals(values[index], restored.get(index)[0]);
                 }
             }
+        }
+    }
+
+    @Test
+    public void sectionReadFailureRejectsTheChunk() throws Exception {
+        byte[] content = new TestChunk().expectedBytes(new int[]{13, -1, 0, 27});
+        try (CountingDataInputStream input = CountingDataInputStream.wrap(new ByteArrayInputStream(content))) {
+            assertThrows(IOException.class, () -> new TestChunk(input));
+        }
+    }
+
+    @Test
+    public void negativeSectionLengthRejectsTheChunk() throws Exception {
+        byte[] content = new TestChunk().expectedBytes(new int[]{13, 0, 0, 27});
+        int firstLength = content.length - 4 * Integer.BYTES - 2 * Integer.BYTES;
+        ByteBuffer.wrap(content).putInt(firstLength, -1);
+        try (CountingDataInputStream input = CountingDataInputStream.wrap(new ByteArrayInputStream(content))) {
+            assertThrows(IOException.class, () -> new TestChunk(input));
         }
     }
 
@@ -69,7 +89,11 @@ public class MantleChunkSerializationTest {
 
         @Override
         protected int[] readSection(CountingDataInputStream input) throws IOException {
-            return new int[]{input.readInt()};
+            int value = input.readInt();
+            if (value == -1) {
+                throw new IOException("Invalid section payload");
+            }
+            return new int[]{value};
         }
 
         @Override

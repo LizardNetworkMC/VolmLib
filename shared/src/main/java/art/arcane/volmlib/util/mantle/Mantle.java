@@ -15,18 +15,17 @@ import art.arcane.volmlib.util.parallel.MultiBurstSupport;
 import org.bukkit.Chunk;
 
 import java.io.File;
-import java.io.InterruptedIOException;
-import java.nio.channels.ClosedChannelException;
-import java.nio.file.FileSystemException;
+import java.io.IOException;
+import java.nio.file.Files;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
-import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.Semaphore;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -47,12 +46,13 @@ public abstract class Mantle<P extends TectonicPlate<C>, C extends MantleChunk<?
     private final int lockSize;
     private final int worldHeight;
     private static final long USE_STAMP_INTERVAL_MILLIS = 250L;
-    private static final int MAXIMUM_CAUSE_DEPTH = 32;
+    private static final long READ_FAILURE_RETRY_MILLIS = 5_000L;
     private static final int RESIDENT_SHIFT = 5;
     private static final int RESIDENT_MASK = (1 << RESIDENT_SHIFT) - 1;
     private final KMap<Long, Long> lastUse;
     private final KMap<Long, P> loadedRegions;
     private final ConcurrentMap<Long, CompletableFuture<P>> loadingRegions;
+    private final ConcurrentMap<Long, ReadFailure> unavailableRegions = new ConcurrentHashMap<>();
     private final HyperLockSupport hyperLock;
     private final AtomicBoolean closed;
     private final MultiBurstSupport ioBurst;
@@ -125,6 +125,7 @@ public abstract class Mantle<P extends TectonicPlate<C>, C extends MantleChunk<?
             residents.set(slot, null);
         }
         loadingRegions.clear();
+        unavailableRegions.clear();
         lastUse.clear();
         toUnload.clear();
     }
@@ -478,6 +479,7 @@ public abstract class Mantle<P extends TectonicPlate<C>, C extends MantleChunk<?
             // mid-flush, losing everything written into it.
             flushLoadedRegions();
             loadingRegions.clear();
+            unavailableRegions.clear();
             lastUse.clear();
             toUnload.clear();
             regionIO.close();
@@ -609,6 +611,7 @@ public abstract class Mantle<P extends TectonicPlate<C>, C extends MantleChunk<?
             // plate resurrected by a concurrent access survives instead of being dropped.
             flushLoadedRegions();
             loadingRegions.clear();
+            unavailableRegions.clear();
             lastUse.clear();
             toUnload.clear();
         } finally {
@@ -631,6 +634,7 @@ public abstract class Mantle<P extends TectonicPlate<C>, C extends MantleChunk<?
         try {
             flushLoadedRegions();
             loadingRegions.clear();
+            unavailableRegions.clear();
             lastUse.clear();
             toUnload.clear();
             regionIO.close();
@@ -881,45 +885,46 @@ public abstract class Mantle<P extends TectonicPlate<C>, C extends MantleChunk<?
             }
 
             File file = fileForRegion(dataFolder, x, z);
-            if (file.exists()) {
-                if (file.length() == 0L) {
-                    if (!file.delete()) {
-                        file.deleteOnExit();
-                    }
-
-                    P fallback = createRegion(x, z);
-                    putLoadedRegion(x, z, k, fallback);
-                    onDebug("Created new Tectonic Plate (Due to Empty File) " + x + " " + z);
-                    use(k);
-                    return fallback;
-                }
-
+            ReadFailure previous = unavailableRegions.get(k);
+            long now = nowMillis();
+            if (previous != null && now < previous.retryAt()) {
+                throw previous.unavailable();
+            }
+            if (!Files.notExists(file.toPath())) {
                 try {
+                    if (file.length() == 0L) {
+                        throw new IOException("Empty Tectonic Plate " + file.getAbsolutePath());
+                    }
                     P region = regionIO.read(file.getName());
                     if (region.getX() != x || region.getZ() != z) {
-                        onWarn("Loaded Tectonic Plate " + x + "," + z + " but read it as " + region.getX() + "," + region.getZ() + ". Assuming " + x + "," + z);
+                        throw new IOException("Tectonic Plate coordinate mismatch for " + file.getAbsolutePath());
                     }
 
+                    unavailableRegions.remove(k);
                     putLoadedRegion(x, z, k, region);
                     onDebug("Loaded Tectonic Plate " + x + " " + z + " " + file.getName());
                     use(k);
                     return region;
-                } catch (Throwable e) {
-                    if (isTransientReadFailure(e)) {
-                        rethrowReadFailure(file, e);
+                } catch (Throwable failure) {
+                    long length = file.length();
+                    long modified = file.lastModified();
+                    if (previous == null || previous.length() != length || previous.modified() != modified
+                            || previous.failure().getClass() != failure.getClass()
+                            || !Objects.equals(previous.failure().getMessage(), failure.getMessage())) {
+                        onWarn("Failed to read Tectonic Plate " + file.getAbsolutePath());
+                        onError(failure);
                     }
-                    onWarn("Failed to read Tectonic Plate " + file.getAbsolutePath() + ", creating a new one.");
-                    onError(e);
-
-                    P fallback = createRegion(x, z);
-                    putLoadedRegion(x, z, k, fallback);
-                    onDebug("Created new Tectonic Plate (Due to Load Failure) " + x + " " + z);
-                    use(k);
-                    return fallback;
+                    if (!(failure instanceof Error)) {
+                        RuntimeException unavailable = failure instanceof RuntimeException runtimeFailure ? runtimeFailure
+                                : new IllegalStateException("Failed to read Tectonic Plate " + file.getAbsolutePath(), failure);
+                        unavailableRegions.put(k, new ReadFailure(failure, unavailable, now + READ_FAILURE_RETRY_MILLIS, length, modified));
+                    }
+                    rethrowReadFailure(file, failure);
                 }
             }
 
             P region = createRegion(x, z);
+            unavailableRegions.remove(k);
             putLoadedRegion(x, z, k, region);
             onDebug("Created new Tectonic Plate " + x + " " + z);
             use(k);
@@ -927,28 +932,7 @@ public abstract class Mantle<P extends TectonicPlate<C>, C extends MantleChunk<?
         });
     }
 
-    /**
-     * A read that failed because the reader was interrupted, the mantle or its channel closed, the file system
-     * refused the file or the JVM ran out of resources says nothing about the plate's content. A fresh plate
-     * would serve empty chunks now and overwrite the persisted plate at the next flush.
-     */
-    private static boolean isTransientReadFailure(Throwable failure) {
-        if (Thread.currentThread().isInterrupted()) {
-            return true;
-        }
-        Throwable current = failure;
-        for (int depth = 0; current != null && depth < MAXIMUM_CAUSE_DEPTH; depth++, current = current.getCause()) {
-            if (current instanceof Error
-                    || current instanceof MantleClosedException
-                    || current instanceof InterruptedException
-                    || current instanceof InterruptedIOException
-                    || current instanceof ClosedChannelException
-                    || current instanceof FileSystemException
-                    || current instanceof RejectedExecutionException) {
-                return true;
-            }
-        }
-        return false;
+    private record ReadFailure(Throwable failure, RuntimeException unavailable, long retryAt, long length, long modified) {
     }
 
     private static void rethrowReadFailure(File file, Throwable failure) {

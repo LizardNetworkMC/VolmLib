@@ -15,7 +15,6 @@ import java.io.DataOutputStream;
 import java.io.IOException;
 
 import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertSame;
 import static org.junit.Assert.assertThrows;
@@ -118,7 +117,7 @@ public class MatterRegistryTest {
     }
 
     @Test
-    public void unknownSliceSkipsOnlyItsAdvertisedBoundary() throws IOException {
+    public void unknownSliceRejectsTheMatterWithoutReadingLaterSlices() throws IOException {
         ByteArrayOutputStream unknown = new ByteArrayOutputStream();
         DataOutputStream unknownOutput = new DataOutputStream(unknown);
         unknownOutput.writeUTF("matter:unknown-value");
@@ -140,12 +139,8 @@ public class MatterRegistryTest {
         output.writeInt(12345);
         CountingDataInputStream input = CountingDataInputStream.wrap(new ByteArrayInputStream(bytes.toByteArray()));
 
-        Matter restored = Matter.readDin(input);
-
-        assertEquals(1, restored.getSliceTypes().size());
-        assertEquals(Integer.valueOf(42), restored.<Integer>getSlice(Integer.class).get(0, 0, 0));
-        assertFalse(restored.hasSlice(Value.class));
-        assertEquals(12345, input.readInt());
+        assertThrows(IOException.class, () -> Matter.readDin(input));
+        assertEquals(99L, input.readLong());
     }
 
     private static byte[] sliceBytes(MatterSlice<?> slice) throws IOException {

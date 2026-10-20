@@ -22,11 +22,16 @@ import java.io.Closeable;
 import java.io.File;
 import java.io.IOException;
 import java.nio.channels.FileChannel;
+import java.nio.file.Files;
 import java.nio.file.OpenOption;
 import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
 import java.nio.file.StandardOpenOption;
+import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.Iterator;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
@@ -42,7 +47,7 @@ public class IOWorkerSupport implements Closeable {
             StandardOpenOption.WRITE,
             StandardOpenOption.CREATE
     );
-    private static final ConcurrentMap<String, Semaphore> GLOBAL_CHANNEL_GATES = new ConcurrentHashMap<>();
+    private static final ConcurrentMap<String, ChannelGate> GLOBAL_CHANNEL_GATES = new ConcurrentHashMap<>();
 
     private final Path root;
     private final File tmp;
@@ -79,14 +84,62 @@ public class IOWorkerSupport implements Closeable {
         });
     }
 
+    public void replaceAtomically(String name, Path staged) throws IOException {
+        Path target = root.resolve(name);
+        ChannelGate gate = gateFor(target);
+        gate.lock.acquireUninterruptibly();
+        try {
+            for (Holder holder : new ArrayList<>(gate.holders)) {
+                holder.closeLocked();
+            }
+            Files.move(staged, target, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
+            try (FileChannel directory = FileChannel.open(target.toAbsolutePath().getParent(), StandardOpenOption.READ)) {
+                directory.force(true);
+            }
+        } finally {
+            gate.lock.release();
+        }
+    }
+
     @Override
     public void close() throws IOException {
+        List<Holder> holders;
         synchronized (cache) {
-            for (Holder h : cache.values()) {
-                h.close();
-            }
-
+            holders = new ArrayList<>(cache.values());
             cache.clear();
+        }
+        IOException failure = null;
+        for (Holder holder : holders) {
+            try {
+                holder.close();
+            } catch (IOException error) {
+                if (failure == null) {
+                    failure = error;
+                } else {
+                    failure.addSuppressed(error);
+                }
+            }
+        }
+        if (failure != null) {
+            throw failure;
+        }
+    }
+
+    private static ChannelGate gateFor(Path filePath) {
+        String gateKey = filePath.toAbsolutePath().normalize().toString();
+        return GLOBAL_CHANNEL_GATES.computeIfAbsent(gateKey, unused -> new ChannelGate());
+    }
+
+    private Holder createHolder(String name) throws IOException {
+        Path filePath = root.resolve(name);
+        ChannelGate gate = gateFor(filePath);
+        gate.lock.acquireUninterruptibly();
+        try {
+            Holder holder = new Holder(FileChannel.open(filePath, OPTIONS), gate);
+            gate.holders.add(holder);
+            return holder;
+        } finally {
+            gate.lock.release();
         }
     }
 
@@ -113,10 +166,7 @@ public class IOWorkerSupport implements Closeable {
                 }
 
                 if (holder == null) {
-                    Path filePath = root.resolve(name);
-                    String gateKey = filePath.toAbsolutePath().normalize().toString();
-                    Semaphore gate = GLOBAL_CHANNEL_GATES.computeIfAbsent(gateKey, unused -> new Semaphore(1));
-                    Holder created = new Holder(FileChannel.open(filePath, OPTIONS), gate);
+                    Holder created = createHolder(name);
                     boolean createdUsed = false;
                     try {
                         synchronized (cache) {
@@ -160,6 +210,11 @@ public class IOWorkerSupport implements Closeable {
                 acquireListener.onAcquire(name, (System.nanoTime() - startNanos) / 1_000_000L);
             }
         }
+    }
+
+    static final class ChannelGate {
+        final Semaphore lock = new Semaphore(1);
+        final Set<Holder> holders = new HashSet<>();
     }
 
     @FunctionalInterface

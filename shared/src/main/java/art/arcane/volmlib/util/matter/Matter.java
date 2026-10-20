@@ -7,7 +7,14 @@ import org.bukkit.World;
 import org.bukkit.block.data.BlockData;
 import org.bukkit.entity.Entity;
 
-import java.io.*;
+import java.io.ByteArrayOutputStream;
+import java.io.DataOutputStream;
+import java.io.File;
+import java.io.FileInputStream;
+import java.io.FileOutputStream;
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.OutputStream;
 import java.util.ArrayList;
 import java.util.Map;
 import java.util.Set;
@@ -58,32 +65,27 @@ public interface Matter {
         for (int i = 0; i < sliceCount; i++) {
             int size = din.readInt();
             if (size <= 0) {
-                continue;
+                throw new IOException("Invalid matter slice length: " + size);
             }
 
-            long start = din.count();
-            long end = start + size;
-
-            try {
-                String id = din.readUTF();
-                Class<?> type = IrisMatter.getSliceType(id);
-                MatterSlice<?> slice = type == null ? null : matter.createSlice(type, matter);
-
-                if (slice != null) {
-                    slice.read(din);
-                    matter.putSlice(type, slice);
-                }
-            } catch (Throwable ignored) {
-                // Unknown or incompatible slice payload; skip to the advertised boundary.
+            long end = din.count() + size;
+            String id = din.readUTF();
+            Class<?> type = IrisMatter.getSliceType(id);
+            if (type == null) {
+                throw new IOException("Unknown matter slice ID: " + id);
             }
-
-            if (din.count() < end) {
-                din.skipTo(end);
+            if (matter.hasSlice(type)) {
+                throw new IOException("Duplicate matter slice ID: " + id);
             }
-
+            MatterSlice<?> slice = matter.createSlice(type, matter);
+            if (slice == null) {
+                throw new IOException("Unavailable matter slice codec: " + id);
+            }
+            slice.read(din);
             if (din.count() != end) {
-                throw new IOException("Matter slice read size mismatch");
+                throw new IOException("Matter slice read size mismatch for " + id);
             }
+            matter.putSlice(type, slice);
         }
 
         return matter;
