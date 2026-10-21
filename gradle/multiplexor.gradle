@@ -1,0 +1,59 @@
+gradle.projectsEvaluated {
+    List<String> libraryProjects = [':shared', ':packaging', ':localization', ':web',
+                                   ':native-api', ':native-terrain-api']
+    List<Map<String, Object>> libraryArtifacts = libraryProjects.collect { String path ->
+        Jar archive = project(path).tasks.named('jar', Jar).get()
+        [path: relativePath(archive.archiveFile.get().asFile), role: 'library', platforms: [], minecraftVersions: []]
+    }
+    Jar nativeSources = project(':native-minecraft26_2-sources').tasks.named('nativeSources', Jar).get()
+    libraryArtifacts.add([
+        path: relativePath(nativeSources.archiveFile.get().asFile),
+        role: 'library',
+        platforms: [],
+        minecraftVersions: []
+    ])
+    List<Map<String, Object>> targets = [[
+        id: 'library',
+        tasks: libraryProjects.collect { String path -> "${path}:build".toString() } + [':native-minecraft26_2-sources:build'],
+        arguments: [],
+        java: 25,
+        memoryMiB: 6144,
+        workers: 2,
+        dependsOn: [],
+        artifacts: libraryArtifacts
+    ]]
+    Properties nativeTargets = new Properties()
+    file('packaging/src/main/resources/META-INF/volmlib/native-targets.properties').withInputStream { InputStream stream ->
+        nativeTargets.load(stream)
+    }
+    List<Project> nativeProjects = [project(':native-common')] + project(':native').subprojects.toList()
+    nativeProjects.sort { Project left, Project right -> left.name <=> right.name }.each { Project nativeProject ->
+        Jar archive = nativeProject.tasks.named('jar', Jar).get()
+        targets.add([
+            id: nativeProject.name == 'native-common' ? 'native-common'
+                    : "native-${nativeProject.name.toLowerCase(Locale.ROOT).replace('_', '-')}".toString(),
+            tasks: ["${nativeProject.path}:build".toString()],
+            arguments: [],
+            java: nativeProject.name == 'native-common' ? 25
+                    : Integer.parseInt(nativeTargets.getProperty(nativeProject.name + '.java')),
+            memoryMiB: 6144,
+            workers: 2,
+            dependsOn: [],
+            artifacts: [[
+                path: relativePath(archive.archiveFile.get().asFile),
+                role: 'library',
+                platforms: [],
+                minecraftVersions: []
+            ]]
+        ])
+    }
+    rootProject.ext.multiplexor = [
+        schema: 1,
+        id: 'volmlib',
+        name: 'VolmLib',
+        sandbox: 'per-target',
+        parallelTargets: true,
+        sourceDependencies: [],
+        targets: targets
+    ]
+}
