@@ -29,6 +29,7 @@ import java.util.Properties;
 import java.util.Random;
 import java.util.Set;
 import java.util.TreeMap;
+import java.util.stream.Stream;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipInputStream;
 
@@ -131,7 +132,8 @@ public class PackedJarTest {
         Files.write(original, originalBytes);
 
         PackedJar.writePackedJar(original, packed, PackedJar.bootstrapClasses(),
-                new PackedJar.PackOptions(List.of(), List.of(), PackedJar.NativeOptions.empty(), PackagingArtifact.SPIGOT_CAP_BYTES));
+                new PackedJar.PackOptions(List.of(), List.of(), PackedJar.NativeOptions.empty(),
+                        PackagingArtifact.SPIGOT_CAP_BYTES, directory.resolve("compression-cache")));
 
         assertArrayEquals(originalBytes, Files.readAllBytes(original));
         Map<String, byte[]> outer = PackedJar.readJar(packed);
@@ -186,12 +188,13 @@ public class PackedJarTest {
 
         Map<String, byte[]> bootstrap = PackedJar.bootstrapClasses();
         PackedJar.PackOptions options = new PackedJar.PackOptions(List.of(), List.of(),
-                PackedJar.NativeOptions.empty(), PackagingArtifact.SPIGOT_CAP_BYTES);
+                PackedJar.NativeOptions.empty(), PackagingArtifact.SPIGOT_CAP_BYTES, directory.resolve("fallback-cache"));
         Path standardPacked = directory.resolve("standard-packed.jar");
         Path compactPacked = directory.resolve("compact-packed.jar");
         assertTrue(PackedJar.writePackedJar(standard, standardPacked, bootstrap, options).compressed());
         assertTrue(PackedJar.writePackedJar(compact, compactPacked, bootstrap, options).compressed());
         assertArrayEquals(Files.readAllBytes(standardPacked), Files.readAllBytes(compactPacked));
+        assertFalse(Files.exists(directory.resolve("fallback-cache")));
         Map<String, byte[]> outer = PackedJar.readJar(standardPacked);
         Map<String, byte[]> payload = payload(outer);
         for (String name : contents.keySet()) {
@@ -211,7 +214,7 @@ public class PackedJarTest {
             Path rejected = directory.resolve(source.getFileName() + "-rejected.jar");
             IOException failure = assertThrows(IOException.class, () -> PackedJar.writePackedJar(source, rejected,
                     bootstrap, new PackedJar.PackOptions(List.of(), List.of(),
-                            PackedJar.NativeOptions.empty(), rejectedBudget)));
+                            PackedJar.NativeOptions.empty(), rejectedBudget, directory.resolve("compression-cache"))));
             assertTrue(failure.getMessage().contains("Selected jar exceeds " + rejectedBudget));
             assertFalse(Files.exists(rejected));
         }
@@ -234,7 +237,8 @@ public class PackedJarTest {
         PackedJar.writePackedJar(original, packed, PackedJar.bootstrapClasses(), new PackedJar.PackOptions(
                 List.of(), List.of(), new PackedJar.NativeOptions(
                         Map.of("native-common", common.toFile(), "native-v26_2_R1", version.toFile()),
-                        "META-INF/iris/native-runtime.properties", "META-INF/iris/native/"), PackagingArtifact.SPIGOT_CAP_BYTES));
+                        "META-INF/iris/native-runtime.properties", "META-INF/iris/native/"),
+                PackagingArtifact.SPIGOT_CAP_BYTES, directory.resolve("compression-cache")));
 
         Map<String, byte[]> outer = PackedJar.readJar(packed);
         Map<String, byte[]> payload = payload(outer);
@@ -257,7 +261,8 @@ public class PackedJarTest {
         Path original = directory.resolve("original.jar");
         Files.write(original, PackedJar.writeJar(repeated, false));
         assertThrows(IOException.class, () -> PackedJar.writePackedJar(original, directory.resolve("out.jar"),
-                Map.of(), new PackedJar.PackOptions(List.of(), List.of(), PackedJar.NativeOptions.empty(), PackagingArtifact.SPIGOT_CAP_BYTES)));
+                Map.of(), new PackedJar.PackOptions(List.of(), List.of(), PackedJar.NativeOptions.empty(),
+                        PackagingArtifact.SPIGOT_CAP_BYTES, directory.resolve("compression-cache"))));
     }
 
     @Test
@@ -268,9 +273,44 @@ public class PackedJarTest {
         Files.write(original, bytes);
         PackedJar.PackResult result = PackedJar.writePackedJar(original, output, PackedJar.bootstrapClasses(),
                 new PackedJar.PackOptions(List.of(), List.of(), PackedJar.NativeOptions.empty(),
-                        PackagingArtifact.SPIGOT_CAP_BYTES));
+                        PackagingArtifact.SPIGOT_CAP_BYTES, directory.resolve("compression-cache")));
         assertFalse(result.compressed());
         assertArrayEquals(bytes, Files.readAllBytes(output));
+        assertFalse(Files.exists(directory.resolve("compression-cache")));
+    }
+
+    @Test
+    void overBudgetOrdinaryJarUsesVerifiedReleaseCompressionWithoutChangingSource() throws Exception {
+        Map<String, byte[]> contents = simplePlugin("CompactBudget");
+        contents.put("reference.txt", sharedConstant().repeat(4).getBytes(StandardCharsets.UTF_8));
+        Path original = directory.resolve("original.jar");
+        Files.write(original, PackedJar.writeJar(contents, false));
+        JarCompactor.compact(original.toFile(), new JarCompactor.CompactionOptions(
+                Set.of(), false, false, false, directory.resolve("ordinary-cache")));
+        byte[] sourceBytes = Files.readAllBytes(original);
+        Path expected = directory.resolve("compact.jar");
+        Files.copy(original, expected);
+        JarCompactor.compact(expected.toFile(), new JarCompactor.CompactionOptions(
+                Set.of(), false, false, true, directory.resolve("expected-cache")));
+        long budget = Files.size(expected);
+        assertTrue(budget < sourceBytes.length);
+        Path output = directory.resolve("selected.jar");
+
+        PackedJar.PackResult result = PackedJar.writePackedJar(original, output, PackedJar.bootstrapClasses(),
+                new PackedJar.PackOptions(List.of(), List.of(), PackedJar.NativeOptions.empty(),
+                        budget, directory.resolve("compression-cache")));
+
+        assertFalse(result.compressed());
+        assertEquals(sourceBytes.length, result.ordinaryBytes());
+        assertEquals(budget, Files.size(output));
+        assertArrayEquals(Files.readAllBytes(expected), Files.readAllBytes(output));
+        assertArrayEquals(sourceBytes, Files.readAllBytes(original));
+        Map<String, byte[]> selected = PackedJar.readJar(output);
+        assertEquals(contents.keySet(), selected.keySet());
+        for (String name : contents.keySet()) {
+            assertArrayEquals(contents.get(name), selected.get(name), name);
+        }
+        assertTrue(Files.isDirectory(directory.resolve("compression-cache")));
     }
 
     @Test
@@ -285,7 +325,8 @@ public class PackedJarTest {
         PackedJar.PackResult result = PackedJar.writePackedJar(original, output, PackedJar.bootstrapClasses(),
                 new PackedJar.PackOptions(List.of(), List.of(), new PackedJar.NativeOptions(
                         Map.of("native-common", nativeJar.toFile()), "META-INF/volmit/native-runtime.properties",
-                        "META-INF/volmit/native/"), PackagingArtifact.SPIGOT_CAP_BYTES));
+                        "META-INF/volmit/native/"),
+                        PackagingArtifact.SPIGOT_CAP_BYTES, directory.resolve("compression-cache")));
         assertFalse(result.compressed());
         Map<String, byte[]> selected = PackedJar.readJar(output);
         assertArrayEquals(Files.readAllBytes(nativeJar), selected.get("META-INF/volmit/native/native-common.jar"));
@@ -293,6 +334,22 @@ public class PackedJarTest {
         assertFalse(calls(selected.get("test/Main.class")).stream().anyMatch(call -> call.endsWith("#install")));
         assertTrue(new String(selected.get("META-INF/volmit/native-runtime.properties"), StandardCharsets.UTF_8)
                 .contains("storage=embedded"));
+
+        Path compactOutput = directory.resolve("compact-selected.jar");
+        byte[] originalBytes = Files.readAllBytes(original);
+        long budget = Files.size(output) - 1;
+        PackedJar.PackResult compact = PackedJar.writePackedJar(original, compactOutput, PackedJar.bootstrapClasses(),
+                new PackedJar.PackOptions(List.of(), List.of(), new PackedJar.NativeOptions(
+                        Map.of("native-common", nativeJar.toFile()), "META-INF/volmit/native-runtime.properties",
+                        "META-INF/volmit/native/"), budget, directory.resolve("compression-cache")));
+        assertFalse(compact.compressed());
+        assertTrue(Files.size(compactOutput) <= budget);
+        Map<String, byte[]> compactContents = PackedJar.readJar(compactOutput);
+        assertEquals(selected.keySet(), compactContents.keySet());
+        for (String name : selected.keySet()) {
+            assertArrayEquals(selected.get(name), compactContents.get(name), name);
+        }
+        assertArrayEquals(originalBytes, Files.readAllBytes(original));
     }
 
     @Test
@@ -300,12 +357,17 @@ public class PackedJarTest {
         assertThrows(IOException.class, () -> PackedJar.descriptor(simplePlugin(".Invalid"), List.of()));
         Path original = directory.resolve("original.jar");
         Path output = directory.resolve("oversize.jar");
-        Files.write(original, PackedJar.writeJar(simplePlugin("Budget"), false));
+        byte[] sourceBytes = PackedJar.writeJar(simplePlugin("Budget"), false);
+        Files.write(original, sourceBytes);
         IOException failure = assertThrows(IOException.class, () -> PackedJar.writePackedJar(original, output,
                 PackedJar.bootstrapClasses(), new PackedJar.PackOptions(List.of(), List.of(),
-                        PackedJar.NativeOptions.empty(), 1L)));
+                        PackedJar.NativeOptions.empty(), 1L, directory.resolve("compression-cache"))));
         assertTrue(failure.getMessage().contains("byte budget"));
         assertFalse(Files.exists(output));
+        assertArrayEquals(sourceBytes, Files.readAllBytes(original));
+        try (Stream<Path> files = Files.list(directory)) {
+            assertFalse(files.anyMatch(path -> path.getFileName().toString().startsWith("ordinary-")));
+        }
     }
 
     @Test
