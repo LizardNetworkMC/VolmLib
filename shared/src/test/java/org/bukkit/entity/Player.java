@@ -2,6 +2,7 @@ package org.bukkit.entity;
 
 import net.md_5.bungee.api.ChatMessageType;
 import net.md_5.bungee.api.chat.BaseComponent;
+import org.bukkit.Server;
 import org.bukkit.inventory.Inventory;
 import org.bukkit.inventory.InventoryView;
 import org.bukkit.inventory.PlayerInventory;
@@ -13,6 +14,13 @@ import java.util.List;
 import java.util.UUID;
 
 public interface Player {
+  default Server getServer() {
+    return null;
+  }
+
+  default void giveExp(int amount) {
+  }
+
   default PlayerProfile getPlayerProfile() {
     return null;
   }

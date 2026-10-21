@@ -8,6 +8,8 @@ import org.gradle.testkit.runner.GradleRunner;
 import org.gradle.testkit.runner.TaskOutcome;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.junit.jupiter.api.parallel.Execution;
+import org.junit.jupiter.api.parallel.ExecutionMode;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.NullSource;
 import org.junit.jupiter.params.provider.ValueSource;
@@ -40,6 +42,7 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
+@Execution(ExecutionMode.CONCURRENT)
 class PluginPackagingPluginTest {
     private static final long SPIGOT_CAP = 7_600_000L;
 
@@ -269,6 +272,8 @@ class PluginPackagingPluginTest {
             assertNotNull(jar.getEntry("fixture/volmlib/integration/IntegrationPayload.class"));
             List<String> bridgeMethods = methods(jar, "owned/IntegrationBridge.class");
             assertTrue(bridgeMethods.contains("describe"), bridgeMethods.toString());
+            List<String> projectionMethods = methods(jar, "owned/ProjectionViews.class");
+            assertTrue(projectionMethods.contains("viewers"), projectionMethods.toString());
             List<String> apiMethods = methods(jar, "art/arcane/example/api/PublicSurface.class");
             assertTrue(apiMethods.contains("describe"), apiMethods.toString());
         }
@@ -587,6 +592,7 @@ class PluginPackagingPluginTest {
         List<String> arguments = new ArrayList<>(List.of(tasks));
         arguments.add("--stacktrace");
         arguments.add("--no-configuration-cache");
+        arguments.add("--max-workers=1");
         return GradleRunner.create().withProjectDir(projectDirectory.toFile()).withPluginClasspath()
                 .withArguments(arguments);
     }
@@ -655,6 +661,8 @@ class PluginPackagingPluginTest {
         source("fixture/volmlib/integration/IntegrationServiceContract.java", "package fixture.volmlib.integration; public interface IntegrationServiceContract { IntegrationPayload describe(); }");
         source("fixture/volmlib/integration/IntegrationPayload.java", "package fixture.volmlib.integration; public record IntegrationPayload(String label) {}");
         source("owned/IntegrationBridge.java", "package owned; import fixture.volmlib.integration.IntegrationPayload; import fixture.volmlib.integration.IntegrationServiceContract; public class IntegrationBridge implements IntegrationServiceContract { public IntegrationPayload describe() { return new IntegrationPayload(\"bridge\"); } }");
+        source("fixture/volmlib/projection/ProjectionViewProvider.java", "package fixture.volmlib.projection; public interface ProjectionViewProvider { java.util.Map<java.util.UUID, Double> viewers(java.util.UUID world, double x, double y, double z, double range); }");
+        source("owned/ProjectionViews.java", "package owned; public class ProjectionViews implements fixture.volmlib.projection.ProjectionViewProvider { public java.util.Map<java.util.UUID, Double> viewers(java.util.UUID world, double x, double y, double z, double range) { return java.util.Map.of(); } }");
         source("art/arcane/example/api/PublicSurface.java", "package art.arcane.example.api; public class PublicSurface { public String describe() { return \"surface\"; } }");
         source("lib/Kept.java", "package lib; public class Kept {}");
         source("lib/Prefixed.java", "package lib; public class Prefixed {}");

@@ -1,3 +1,5 @@
+import java.time.Duration
+
 String configuredGroup = providers.gradleProperty('group')
     .orElse('art.arcane')
     .get()
@@ -11,6 +13,10 @@ version = configuredVersion
 allprojects {
     group = rootProject.group
     version = rootProject.version
+
+    tasks.withType(Test).configureEach {
+        timeout.convention(Duration.ofMinutes(5))
+    }
 
     repositories {
         mavenLocal()

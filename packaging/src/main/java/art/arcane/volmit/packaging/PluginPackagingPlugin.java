@@ -15,9 +15,11 @@ import org.gradle.api.tasks.SourceSet;
 import org.gradle.api.tasks.TaskProvider;
 import org.gradle.api.tasks.bundling.AbstractArchiveTask;
 import org.gradle.api.tasks.compile.JavaCompile;
+import org.gradle.api.tasks.testing.Test;
 
 import java.io.File;
 import java.io.IOException;
+import java.time.Duration;
 import java.util.HashSet;
 import java.util.ArrayList;
 import java.util.List;
@@ -32,6 +34,8 @@ public class PluginPackagingPlugin implements Plugin<Project> {
     public void apply(Project project) {
         PluginPackagingExtension extension = project.getExtensions().create(
                 "pluginPackaging", PluginPackagingExtension.class, project);
+        project.allprojects(child -> child.getTasks().withType(Test.class).configureEach(task ->
+                task.getTimeout().convention(Duration.ofMinutes(5))));
         project.allprojects(child -> child.getTasks().withType(JavaCompile.class).configureEach(task -> {
             if (!task.getName().toLowerCase(Locale.ROOT).contains("test")) {
                 task.getOptions().getDebugOptions().setDebugLevel("source,lines");

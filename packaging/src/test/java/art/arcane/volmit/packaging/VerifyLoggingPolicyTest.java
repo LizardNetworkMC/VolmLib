@@ -179,6 +179,7 @@ class VerifyLoggingPolicyTest {
         List<String> arguments = new ArrayList<>(List.of(tasks));
         arguments.add("--stacktrace");
         arguments.add("--no-configuration-cache");
+        arguments.add("--max-workers=1");
         return GradleRunner.create().withProjectDir(directory.toFile()).withPluginClasspath().withArguments(arguments);
     }
 

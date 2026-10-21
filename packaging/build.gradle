@@ -41,11 +41,17 @@ dependencies {
 
 int testForkCount = providers.gradleProperty('volmLibTestForks')
         .map { String forks -> Integer.parseInt(forks) }
-        .getOrElse(Math.max(1, Runtime.runtime.availableProcessors().intdiv(2)))
+        .getOrElse(Math.min(2, Math.max(1, Runtime.runtime.availableProcessors().intdiv(2))))
 
 tasks.named('test') {
     useJUnitPlatform()
     maxParallelForks = testForkCount
+    systemProperty('junit.jupiter.execution.parallel.enabled', 'true')
+    systemProperty('junit.jupiter.execution.parallel.mode.default', 'same_thread')
+    systemProperty('junit.jupiter.execution.parallel.mode.classes.default', 'same_thread')
+    systemProperty('junit.jupiter.execution.parallel.config.strategy', 'fixed')
+    systemProperty('junit.jupiter.execution.parallel.config.fixed.parallelism', '2')
+    systemProperty('junit.jupiter.execution.parallel.config.fixed.max-pool-size', '2')
 }
 
 File nativeMinecraftSources = file('../native/minecraft-common/src')

@@ -89,6 +89,8 @@ public final class ShrinkRules {
                     + " public org.bukkit.event.HandlerList getHandlers(); }",
             "-keep class **.integration.IntegrationServiceContract { *; }",
             "-keep class * implements **.integration.IntegrationServiceContract { *; }",
+            "-keep interface **.projection.ProjectionViewProvider { *; }",
+            "-keep class * implements **.projection.ProjectionViewProvider { public *; }",
             "-keep class **.volmlib.integration.** { *; }",
             "-keep public class art.arcane.**.api.** { public protected *; }",
             "-keep public class com.volmit.**.api.** { public protected *; }");

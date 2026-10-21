@@ -732,6 +732,9 @@ public class BukkitLanguageSwitcherTest {
 
     public interface TestPlayer extends Player, CommandSender {
         @Override
+        Server getServer();
+
+        @Override
         Player.Spigot spigot();
 
         @Override
