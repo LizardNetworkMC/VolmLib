@@ -29,6 +29,8 @@ import java.util.Properties;
 import java.util.Random;
 import java.util.Set;
 import java.util.TreeMap;
+import java.util.zip.ZipEntry;
+import java.util.zip.ZipInputStream;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -160,6 +162,59 @@ public class PackedJarTest {
         assertFalse(outer.containsKey("unrelated/slimjar/Unused.class"));
         assertTrue(payload.containsKey("unrelated/slimjar/Unused.class"));
         assertTrue(Files.size(packed) < Files.size(original));
+    }
+
+    @Test
+    void xzDistributionIsIdenticalAcrossIntermediateZipCompressionModes() throws Exception {
+        Map<String, byte[]> contents = simplePlugin("Compression");
+        addCompressibleClasses(contents);
+        Path standard = directory.resolve("standard.jar");
+        Path compact = directory.resolve("compact.jar");
+        byte[] original = PackedJar.writeJar(contents, false);
+        Files.write(standard, original);
+        Files.write(compact, original);
+        JarCompactor.compact(standard.toFile(), new JarCompactor.CompactionOptions(
+                Set.of(), true, true, false, directory.resolve("compression-cache")));
+        JarCompactor.compact(compact.toFile(), new JarCompactor.CompactionOptions(
+                Set.of(), true, true, true, directory.resolve("compression-cache")));
+        Map<String, byte[]> standardContents = PackedJar.readJar(standard);
+        Map<String, byte[]> compactContents = PackedJar.readJar(compact);
+        assertEquals(standardContents.keySet(), compactContents.keySet());
+        for (String name : standardContents.keySet()) {
+            assertArrayEquals(standardContents.get(name), compactContents.get(name), name);
+        }
+
+        Map<String, byte[]> bootstrap = PackedJar.bootstrapClasses();
+        PackedJar.PackOptions options = new PackedJar.PackOptions(List.of(), List.of(),
+                PackedJar.NativeOptions.empty(), PackagingArtifact.SPIGOT_CAP_BYTES);
+        Path standardPacked = directory.resolve("standard-packed.jar");
+        Path compactPacked = directory.resolve("compact-packed.jar");
+        assertTrue(PackedJar.writePackedJar(standard, standardPacked, bootstrap, options).compressed());
+        assertTrue(PackedJar.writePackedJar(compact, compactPacked, bootstrap, options).compressed());
+        assertArrayEquals(Files.readAllBytes(standardPacked), Files.readAllBytes(compactPacked));
+        Map<String, byte[]> outer = PackedJar.readJar(standardPacked);
+        Map<String, byte[]> payload = payload(outer);
+        for (String name : contents.keySet()) {
+            if (!name.equals("test/Main.class")) {
+                assertArrayEquals(contents.get(name), payload.get(name), name);
+            }
+        }
+        try (ZipInputStream archive = new ZipInputStream(new XZInputStream(
+                new ByteArrayInputStream(outer.get(PackedJar.PAYLOAD))))) {
+            for (ZipEntry entry = archive.getNextEntry(); entry != null; entry = archive.getNextEntry()) {
+                assertEquals(ZipEntry.STORED, entry.getMethod(), entry.getName());
+            }
+        }
+
+        long rejectedBudget = Files.size(standardPacked) - 1;
+        for (Path source : List.of(standard, compact)) {
+            Path rejected = directory.resolve(source.getFileName() + "-rejected.jar");
+            IOException failure = assertThrows(IOException.class, () -> PackedJar.writePackedJar(source, rejected,
+                    bootstrap, new PackedJar.PackOptions(List.of(), List.of(),
+                            PackedJar.NativeOptions.empty(), rejectedBudget)));
+            assertTrue(failure.getMessage().contains("Selected jar exceeds " + rejectedBudget));
+            assertFalse(Files.exists(rejected));
+        }
     }
 
     @Test
