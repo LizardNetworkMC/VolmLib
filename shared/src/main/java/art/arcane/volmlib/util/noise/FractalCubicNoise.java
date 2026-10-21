@@ -52,4 +52,8 @@ public class FractalCubicNoise implements NoiseGenerator, OctaveNoise {
     public void setOctaves(int octaves) {
         n.setFractalOctaves(octaves);
     }
+
+    public FastNoiseDouble getFastNoise() {
+        return n;
+    }
 }

@@ -52,4 +52,8 @@ public class FractalRigidMultiSimplexNoise implements NoiseGenerator, OctaveNois
     public void setOctaves(int o) {
         n.setFractalOctaves(o);
     }
+
+    public FastNoiseDouble getFastNoise() {
+        return n;
+    }
 }

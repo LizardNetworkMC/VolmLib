@@ -263,6 +263,46 @@ public class FastNoiseDouble {
         return m_fractalBounding;
     }
 
+    public NoiseType getNoiseType() {
+        return m_noiseType;
+    }
+
+    public Longerp getLongerp() {
+        return m_longerp;
+    }
+
+    public long getFractalOctaves() {
+        return m_octaves;
+    }
+
+    public double getFractalLacunarity() {
+        return m_lacunarity;
+    }
+
+    public double getFractalGain() {
+        return m_gain;
+    }
+
+    public FractalType getFractalType() {
+        return m_fractalType;
+    }
+
+    public CellularDistanceFunction getCellularDistanceFunction() {
+        return m_cellularDistanceFunction;
+    }
+
+    public CellularReturnType getCellularReturnType() {
+        return m_cellularReturnType;
+    }
+
+    public FastNoiseDouble getCellularNoiseLookup() {
+        return m_cellularNoiseLookup;
+    }
+
+    public double getGradientPerturbAmp() {
+        return m_gradientPerturbAmp;
+    }
+
     // Sets frequency for all noise types
     // Default: 0.01
     public void setFrequency(double frequency) {

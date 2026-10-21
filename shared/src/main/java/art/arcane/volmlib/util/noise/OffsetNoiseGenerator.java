@@ -128,4 +128,12 @@ public class OffsetNoiseGenerator implements NoiseGenerator, OctaveNoise {
     public NoiseGenerator getBase() {
         return base;
     }
+
+    public double getOffsetX() {
+        return ox;
+    }
+
+    public double getOffsetZ() {
+        return oz;
+    }
 }

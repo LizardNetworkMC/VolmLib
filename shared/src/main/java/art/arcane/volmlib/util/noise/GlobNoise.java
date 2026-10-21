@@ -48,4 +48,8 @@ public class GlobNoise implements NoiseGenerator {
     public double noise(double x, double y, double z) {
         return f(n.GetCellular(x, y, z));
     }
+
+    public FastNoiseDouble getFastNoise() {
+        return n;
+    }
 }
