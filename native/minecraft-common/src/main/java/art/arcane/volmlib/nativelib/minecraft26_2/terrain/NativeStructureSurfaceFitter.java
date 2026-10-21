@@ -656,7 +656,7 @@ public final class NativeStructureSurfaceFitter {
         }
     }
 
-    private static boolean flattenPieceAllowed(StructureStart start, StructurePiece piece) {
+    static boolean flattenPieceAllowed(StructureStart start, StructurePiece piece) {
         if (piece instanceof RuinedPortalPiece portal) {
             RuinedPortalPiece.VerticalPlacement placement = NativeStructureReflection.ruinedPortalVerticalPlacement(portal);
             return placement == RuinedPortalPiece.VerticalPlacement.ON_LAND_SURFACE
@@ -696,7 +696,7 @@ public final class NativeStructureSurfaceFitter {
         return false;
     }
 
-    private static int flattenGroundY(
+    static int flattenGroundY(
             StructureStart start, StructurePiece piece, IntBinaryOperator surfaceHeight) {
         BoundingBox bounds = piece.getBoundingBox();
         if (piece instanceof PoolElementStructurePiece poolPiece) {
@@ -808,12 +808,11 @@ public final class NativeStructureSurfaceFitter {
         for (int y = targetY - 1; y >= minimumY; y--) {
             BlockState existing = world.getBlockState(position.set(x, y, z));
             if (!existing.getFluidState().isEmpty()
-                    || NativeStructureVegetationClearer.isTreeBlock(existing)) {
+                    || NativeStructureVegetationClearer.isTreeBlock(existing)
+                    || isTerrainBlock(existing)) {
                 break;
             }
-            if (!isTerrainBlock(existing)) {
-                world.setBlock(position, materials.subsurface(), 2);
-            }
+            world.setBlock(position, materials.subsurface(), 2);
         }
     }
 

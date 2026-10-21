@@ -102,6 +102,53 @@ public class ChunkDataSectionWriterTest {
     }
 
     @Test
+    public void explicitCaveAirClearsVerticalRunsAcrossSectionBoundaries() {
+        NativeBlockState dirt = handle(Blocks.DIRT.defaultBlockState());
+        NativeBlockState coal = handle(Blocks.COAL_ORE.defaultBlockState());
+        NativeBlockState caveAir = handle(Blocks.CAVE_AIR.defaultBlockState());
+        NativeBlockVolume volume = new NativeBlockVolume() {
+            @Override
+            public NativeBlockState getStoredRaw(int x, int y, int z) {
+                int blockY = y + ACCESS_MIN_Y;
+                if (x == 14 && z == 6) {
+                    return blockY >= 33 && blockY <= 54 ? caveAir : dirt;
+                }
+                if (x == 0 && z == 5) {
+                    return blockY >= 34 && blockY <= 55 ? caveAir : coal;
+                }
+                return null;
+            }
+
+            @Override
+            public int highestStoredY(int x, int z) {
+                return x == 14 && z == 6 || x == 0 && z == 5 ? HEIGHT - 1 : -1;
+            }
+        };
+
+        for (boolean prepopulate : new boolean[]{false, true}) {
+            FakeChunk chunk = new FakeChunk();
+            if (prepopulate) {
+                for (int y = 0; y < HEIGHT; y++) {
+                    chunk.section(y).setBlockState(14, y & 15, 6, Blocks.DIRT.defaultBlockState(), false);
+                    chunk.section(y).setBlockState(0, y & 15, 5, Blocks.COAL_ORE.defaultBlockState(), false);
+                }
+            }
+
+            assertTrue(new ChunkDataSectionWriter(chunk.access, volume, ACCESS_MIN_Y).write(0, HEIGHT));
+
+            for (int y = 0; y < HEIGHT; y++) {
+                int blockY = y + ACCESS_MIN_Y;
+                BlockState first = blockY >= 33 && blockY <= 54
+                        ? Blocks.CAVE_AIR.defaultBlockState() : Blocks.DIRT.defaultBlockState();
+                BlockState second = blockY >= 34 && blockY <= 55
+                        ? Blocks.CAVE_AIR.defaultBlockState() : Blocks.COAL_ORE.defaultBlockState();
+                assertSame("first column at " + blockY, first, chunk.section(y).getBlockState(14, y & 15, 6));
+                assertSame("second column at " + blockY, second, chunk.section(y).getBlockState(0, y & 15, 5));
+            }
+        }
+    }
+
+    @Test
     public void writtenBlockCountsMatchTheRecount() throws ReflectiveOperationException {
         Field sectionCounts = ChunkDataSectionWriter.class.getDeclaredField("SECTION_COUNTS");
         sectionCounts.setAccessible(true);

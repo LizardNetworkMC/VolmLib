@@ -15,6 +15,8 @@ import net.minecraft.world.level.chunk.ChunkGeneratorStructureState;
 import net.minecraft.world.level.levelgen.structure.BoundingBox;
 import net.minecraft.world.level.levelgen.structure.Structure;
 import net.minecraft.world.level.levelgen.structure.StructurePiece;
+import net.minecraft.world.level.levelgen.structure.PoolElementStructurePiece;
+import net.minecraft.world.level.levelgen.structure.pools.JigsawJunction;
 import net.minecraft.world.level.levelgen.structure.StructureSet;
 import net.minecraft.world.level.levelgen.structure.StructureStart;
 import net.minecraft.world.level.levelgen.structure.templatesystem.StructureTemplateManager;
@@ -22,8 +24,10 @@ import art.arcane.volmlib.nativelib.terrain.structure.NativeStructureVolume;
 import art.arcane.volmlib.nativelib.terrain.structure.StructureVolumePolicy;
 import art.arcane.volmlib.nativelib.terrain.structure.StructureStartPlan;
 import art.arcane.volmlib.nativelib.terrain.structure.StructurePlacementDecision;
+import art.arcane.volmlib.nativelib.terrain.structure.StructureTerrainSettings;
 import art.arcane.volmlib.util.collection.KList;
 import java.util.List;
+import java.util.ArrayList;
 import java.util.Objects;
 import java.util.function.IntBinaryOperator;
 import java.util.function.Supplier;
@@ -80,7 +84,7 @@ public final class NativeStructureVolumeSource<C, P extends StructureStartPlan> 
             try {
                 StructureStart generated = NativeStructureFactory.generate(
                         generationContext(source, bindings), registry.wrapAsHolder(structure), plan, 0);
-                target = appendPieces(target, structureId, generated);
+                target = appendPieces(target, structureId, generated, decision.terrain(), surfaceHeight(source));
             } catch (RuntimeException | Error error) {
                 policy.warn(structureId, error);
             }
@@ -145,7 +149,7 @@ public final class NativeStructureVolumeSource<C, P extends StructureStartPlan> 
                             decision.preserveSourceY(),
                             decision.yBand(),
                             surfaceHeight);
-                    target = appendPieces(target, structureId, generated);
+                    target = appendPieces(target, structureId, generated, decision.terrain(), surfaceHeight);
                 } catch (RuntimeException | Error error) {
                     policy.warn(structureId, error);
                 }
@@ -174,19 +178,41 @@ public final class NativeStructureVolumeSource<C, P extends StructureStartPlan> 
     }
 
     public static KList<NativeStructureVolume> appendPieces(KList<NativeStructureVolume> volumes,
-                                                     String structureId, StructureStart start) {
+                                                     String structureId, StructureStart start,
+                                                     StructureTerrainSettings terrain, IntBinaryOperator surfaceHeight) {
         if (start == null || !start.isValid()) {
             return volumes;
         }
+        boolean flatten = NativeStructureSurfaceFitter.requiresFlattenTerrain(
+                new NativeStructureTerrainIntegrator.TerrainTarget(structureId, start, terrain))
+                && NativeStructureSurfaceFitter.hasExposedFlattenPiece(start, surfaceHeight, terrain.resolvedFlattenRange());
         KList<NativeStructureVolume> target = volumes;
         for (StructurePiece piece : start.getPieces()) {
             BoundingBox bounds = piece.getBoundingBox();
             if (target == null) {
                 target = new KList<>();
             }
+            NativeStructureVolume.SurfaceAdjustment adjustment = null;
+            if (flatten && NativeStructureSurfaceFitter.flattenPieceAllowed(start, piece)) {
+                List<NativeStructureVolume.SurfaceAnchor> anchors = new ArrayList<>();
+                if (piece instanceof PoolElementStructurePiece poolPiece) {
+                    for (JigsawJunction junction : poolPiece.getJunctions()) {
+                        anchors.add(new NativeStructureVolume.SurfaceAnchor(
+                                junction.getSourceX(), junction.getSourceX(), junction.getSourceZ(), junction.getSourceZ(),
+                                junction.getSourceGroundY() - 1, 1));
+                    }
+                } else {
+                    anchors.add(new NativeStructureVolume.SurfaceAnchor(bounds.minX(), bounds.maxX(), bounds.minZ(), bounds.maxZ(),
+                            NativeStructureSurfaceFitter.flattenGroundY(start, piece, surfaceHeight), 2));
+                }
+                if (!anchors.isEmpty()) {
+                    adjustment = new NativeStructureVolume.SurfaceAdjustment(anchors,
+                            Math.max(0, Math.min(128, terrain.getHorizontalPadding())), terrain.resolvedFlattenRange());
+                }
+            }
             target.add(new NativeStructureVolume(structureId,
                     bounds.minX(), bounds.minY(), bounds.minZ(),
-                    bounds.maxX(), bounds.maxY(), bounds.maxZ()));
+                    bounds.maxX(), bounds.maxY(), bounds.maxZ(), adjustment));
         }
         return target;
     }
