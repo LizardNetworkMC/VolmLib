@@ -26,12 +26,12 @@ public abstract class PrimitiveKernel {
     private final FastNoiseDouble fastNoise;
     private final long signature;
 
-    PrimitiveKernel(PrimitiveKind kind, FastNoiseDouble fastNoise, double ox, double oz, long signature) {
-        this.kind = kind;
-        this.fastNoise = fastNoise;
-        this.ox = ox;
-        this.oz = oz;
-        this.signature = signature;
+    PrimitiveKernel(KernelSpec spec) {
+        kind = spec.kind();
+        fastNoise = spec.fastNoise();
+        ox = spec.ox();
+        oz = spec.oz();
+        signature = spec.signature();
     }
 
     public static PrimitiveKernel of(NoiseGenerator generator) {
@@ -40,51 +40,57 @@ public abstract class PrimitiveKernel {
         }
         OffsetNoiseGenerator offset = (OffsetNoiseGenerator) generator;
         NoiseGenerator base = offset.getBase();
-        double ox = offset.getOffsetX();
-        double oz = offset.getOffsetZ();
         Class<?> type = base.getClass();
         if (type == SimplexNoise.class) {
-            return new SimplexKernel((SimplexNoise) base, ox, oz);
+            SimplexNoise simplex = (SimplexNoise) base;
+            return new SimplexKernel(spec(PrimitiveKind.SIMPLEX, simplex.getFastNoise(), offset, simplex.getOctaves(), simplex.getOctaveBounding()), simplex);
         }
         if (type == PerlinNoise.class) {
-            return new PerlinKernel((PerlinNoise) base, ox, oz);
+            PerlinNoise perlin = (PerlinNoise) base;
+            return new PerlinKernel(spec(PrimitiveKind.PERLIN, perlin.getFastNoise(), offset, perlin.getOctaves(), perlin.getOctaveBounding()), perlin);
         }
         if (type == FractalBillowSimplexNoise.class) {
-            return new BillowSimplexKernel((FractalBillowSimplexNoise) base, ox, oz);
+            FractalBillowSimplexNoise billow = (FractalBillowSimplexNoise) base;
+            return new BillowSimplexKernel(spec(PrimitiveKind.BILLOW_SIMPLEX, billow.getFastNoise(), offset, 1, 1D), billow);
         }
         if (type == FractalFBMSimplexNoise.class) {
-            return new FbmSimplexKernel((FractalFBMSimplexNoise) base, ox, oz);
+            FractalFBMSimplexNoise fbm = (FractalFBMSimplexNoise) base;
+            return new FbmSimplexKernel(spec(PrimitiveKind.FBM_SIMPLEX, fbm.getFastNoise(), offset, 1, 1D), fbm);
         }
         if (type == CellularNoise.class) {
-            return new CellularKernel((CellularNoise) base, ox, oz);
+            CellularNoise cellular = (CellularNoise) base;
+            return new CellularKernel(spec(PrimitiveKind.CELLULAR, cellular.getFastNoise(), offset, 1, 1D), cellular);
         }
         if (type == VascularNoise.class) {
-            return new VascularKernel((VascularNoise) base, ox, oz);
+            VascularNoise vascular = (VascularNoise) base;
+            return new VascularKernel(spec(PrimitiveKind.VASCULAR, vascular.getFastNoise(), offset, 1, 1D), vascular);
         }
         if (type == GlobNoise.class) {
-            return new GlobKernel((GlobNoise) base, ox, oz);
+            GlobNoise glob = (GlobNoise) base;
+            return new GlobKernel(spec(PrimitiveKind.GLOB, glob.getFastNoise(), offset, 1, 1D), glob);
         }
         if (type == WhiteNoise.class) {
-            return new WhiteKernel((WhiteNoise) base, ox, oz);
+            WhiteNoise white = (WhiteNoise) base;
+            return new WhiteKernel(spec(PrimitiveKind.WHITE, white.getFastNoise(), offset, 1, 1D), white);
         }
         if (type == FractalRigidMultiSimplexNoise.class) {
-            return offsetCall(PrimitiveKind.RIGID_MULTI_SIMPLEX, base, ((FractalRigidMultiSimplexNoise) base).getFastNoise(), ox, oz);
+            return new OffsetCallKernel(spec(PrimitiveKind.RIGID_MULTI_SIMPLEX, ((FractalRigidMultiSimplexNoise) base).getFastNoise(), offset, 1, 1D), base);
         }
         if (type == FractalBillowPerlinNoise.class) {
-            return offsetCall(PrimitiveKind.BILLOW_PERLIN, base, ((FractalBillowPerlinNoise) base).getFastNoise(), ox, oz);
+            return new OffsetCallKernel(spec(PrimitiveKind.BILLOW_PERLIN, ((FractalBillowPerlinNoise) base).getFastNoise(), offset, 1, 1D), base);
         }
         if (type == CubicNoise.class) {
-            return offsetCall(PrimitiveKind.CUBIC, base, ((CubicNoise) base).getFastNoise(), ox, oz);
+            return new OffsetCallKernel(spec(PrimitiveKind.CUBIC, ((CubicNoise) base).getFastNoise(), offset, 1, 1D), base);
         }
         if (type == FractalCubicNoise.class) {
-            return offsetCall(PrimitiveKind.FRACTAL_CUBIC, base, ((FractalCubicNoise) base).getFastNoise(), ox, oz);
+            return new OffsetCallKernel(spec(PrimitiveKind.FRACTAL_CUBIC, ((FractalCubicNoise) base).getFastNoise(), offset, 1, 1D), base);
         }
         if (type == CellHeightNoise.class) {
-            return offsetCall(PrimitiveKind.CELL_HEIGHT, base, ((CellHeightNoise) base).getFastNoise(), ox, oz);
+            return new OffsetCallKernel(spec(PrimitiveKind.CELL_HEIGHT, ((CellHeightNoise) base).getFastNoise(), offset, 1, 1D), base);
         }
         if (type == FlatNoise.class) {
-            return new OffsetCallKernel(PrimitiveKind.FLAT, base, null, ox, oz,
-                    new SignatureHasher().add(PrimitiveKind.FLAT.ordinal()).add(ox).add(oz).value());
+            long signature = new SignatureHasher().add(PrimitiveKind.FLAT.ordinal()).add(offset.getOffsetX()).add(offset.getOffsetZ()).value();
+            return new OffsetCallKernel(new KernelSpec(PrimitiveKind.FLAT, null, offset.getOffsetX(), offset.getOffsetZ(), signature), base);
         }
         if (type == InterpolatedNoise.class) {
             InterpolatedNoise interpolated = (InterpolatedNoise) base;
@@ -92,10 +98,10 @@ public abstract class PrimitiveKernel {
                     .add(interpolated.getMethod().ordinal())
                     .add(interpolated.getCoordinateScale())
                     .add(of(interpolated.getGenerator()).signature())
-                    .add(ox)
-                    .add(oz)
+                    .add(offset.getOffsetX())
+                    .add(offset.getOffsetZ())
                     .value();
-            return new OffsetCallKernel(PrimitiveKind.INTERPOLATED, base, null, ox, oz, signature);
+            return new OffsetCallKernel(new KernelSpec(PrimitiveKind.INTERPOLATED, null, offset.getOffsetX(), offset.getOffsetZ(), signature), base);
         }
         return new GenericKernel(generator);
     }
@@ -138,15 +144,13 @@ public abstract class PrimitiveKernel {
 
     abstract void signed3(double[] u, double[] v, double[] w, double[] out, int count);
 
-    private static PrimitiveKernel offsetCall(PrimitiveKind kind, NoiseGenerator base, FastNoiseDouble noise, double ox, double oz) {
-        return new OffsetCallKernel(kind, base, noise, ox, oz, fastSignature(kind, noise, ox, oz, 1, 1D));
-    }
-
-    static long fastSignature(PrimitiveKind kind, FastNoiseDouble noise, double ox, double oz, int octaves, double octaveBounding) {
+    private static KernelSpec spec(PrimitiveKind kind, FastNoiseDouble noise, OffsetNoiseGenerator offset, int octaves, double octaveBounding) {
+        double ox = offset.getOffsetX();
+        double oz = offset.getOffsetZ();
         if (noise.getCellularNoiseLookup() != null) {
-            return SignatureHasher.unique();
+            return new KernelSpec(kind, noise, ox, oz, SignatureHasher.unique());
         }
-        return new SignatureHasher().add(kind.ordinal())
+        long signature = new SignatureHasher().add(kind.ordinal())
                 .add(noise.getSeed())
                 .add(noise.getFrequency())
                 .add(noise.getNoiseType().ordinal())
@@ -164,14 +168,17 @@ public abstract class PrimitiveKernel {
                 .add(octaves)
                 .add(octaveBounding)
                 .value();
+        return new KernelSpec(kind, noise, ox, oz, signature);
+    }
+
+    record KernelSpec(PrimitiveKind kind, FastNoiseDouble fastNoise, double ox, double oz, long signature) {
     }
 
     static final class SimplexKernel extends PrimitiveKernel {
         private final SimplexNoise generator;
 
-        SimplexKernel(SimplexNoise generator, double ox, double oz) {
-            super(PrimitiveKind.SIMPLEX, generator.getFastNoise(), ox, oz,
-                    fastSignature(PrimitiveKind.SIMPLEX, generator.getFastNoise(), ox, oz, generator.getOctaves(), generator.getOctaveBounding()));
+        SimplexKernel(KernelSpec spec, SimplexNoise generator) {
+            super(spec);
             this.generator = generator;
         }
 
@@ -244,9 +251,8 @@ public abstract class PrimitiveKernel {
     static final class PerlinKernel extends PrimitiveKernel {
         private final PerlinNoise generator;
 
-        PerlinKernel(PerlinNoise generator, double ox, double oz) {
-            super(PrimitiveKind.PERLIN, generator.getFastNoise(), ox, oz,
-                    fastSignature(PrimitiveKind.PERLIN, generator.getFastNoise(), ox, oz, generator.getOctaves(), generator.getOctaveBounding()));
+        PerlinKernel(KernelSpec spec, PerlinNoise generator) {
+            super(spec);
             this.generator = generator;
         }
 
@@ -319,9 +325,8 @@ public abstract class PrimitiveKernel {
     static final class BillowSimplexKernel extends PrimitiveKernel {
         private final FractalBillowSimplexNoise generator;
 
-        BillowSimplexKernel(FractalBillowSimplexNoise generator, double ox, double oz) {
-            super(PrimitiveKind.BILLOW_SIMPLEX, generator.getFastNoise(), ox, oz,
-                    fastSignature(PrimitiveKind.BILLOW_SIMPLEX, generator.getFastNoise(), ox, oz, 1, 1D));
+        BillowSimplexKernel(KernelSpec spec, FractalBillowSimplexNoise generator) {
+            super(spec);
             this.generator = generator;
         }
 
@@ -394,9 +399,8 @@ public abstract class PrimitiveKernel {
     static final class FbmSimplexKernel extends PrimitiveKernel {
         private final FractalFBMSimplexNoise generator;
 
-        FbmSimplexKernel(FractalFBMSimplexNoise generator, double ox, double oz) {
-            super(PrimitiveKind.FBM_SIMPLEX, generator.getFastNoise(), ox, oz,
-                    fastSignature(PrimitiveKind.FBM_SIMPLEX, generator.getFastNoise(), ox, oz, 1, 1D));
+        FbmSimplexKernel(KernelSpec spec, FractalFBMSimplexNoise generator) {
+            super(spec);
             this.generator = generator;
         }
 
@@ -469,9 +473,8 @@ public abstract class PrimitiveKernel {
     static final class CellularKernel extends PrimitiveKernel {
         private final CellularNoise generator;
 
-        CellularKernel(CellularNoise generator, double ox, double oz) {
-            super(PrimitiveKind.CELLULAR, generator.getFastNoise(), ox, oz,
-                    fastSignature(PrimitiveKind.CELLULAR, generator.getFastNoise(), ox, oz, 1, 1D));
+        CellularKernel(KernelSpec spec, CellularNoise generator) {
+            super(spec);
             this.generator = generator;
         }
 
@@ -544,9 +547,8 @@ public abstract class PrimitiveKernel {
     static final class VascularKernel extends PrimitiveKernel {
         private final VascularNoise generator;
 
-        VascularKernel(VascularNoise generator, double ox, double oz) {
-            super(PrimitiveKind.VASCULAR, generator.getFastNoise(), ox, oz,
-                    fastSignature(PrimitiveKind.VASCULAR, generator.getFastNoise(), ox, oz, 1, 1D));
+        VascularKernel(KernelSpec spec, VascularNoise generator) {
+            super(spec);
             this.generator = generator;
         }
 
@@ -619,9 +621,8 @@ public abstract class PrimitiveKernel {
     static final class GlobKernel extends PrimitiveKernel {
         private final GlobNoise generator;
 
-        GlobKernel(GlobNoise generator, double ox, double oz) {
-            super(PrimitiveKind.GLOB, generator.getFastNoise(), ox, oz,
-                    fastSignature(PrimitiveKind.GLOB, generator.getFastNoise(), ox, oz, 1, 1D));
+        GlobKernel(KernelSpec spec, GlobNoise generator) {
+            super(spec);
             this.generator = generator;
         }
 
@@ -694,9 +695,8 @@ public abstract class PrimitiveKernel {
     static final class WhiteKernel extends PrimitiveKernel {
         private final WhiteNoise generator;
 
-        WhiteKernel(WhiteNoise generator, double ox, double oz) {
-            super(PrimitiveKind.WHITE, generator.getFastNoise(), ox, oz,
-                    fastSignature(PrimitiveKind.WHITE, generator.getFastNoise(), ox, oz, 1, 1D));
+        WhiteKernel(KernelSpec spec, WhiteNoise generator) {
+            super(spec);
             this.generator = generator;
         }
 
@@ -769,8 +769,8 @@ public abstract class PrimitiveKernel {
     static final class OffsetCallKernel extends PrimitiveKernel {
         private final NoiseGenerator generator;
 
-        OffsetCallKernel(PrimitiveKind kind, NoiseGenerator generator, FastNoiseDouble noise, double ox, double oz, long signature) {
-            super(kind, noise, ox, oz, signature);
+        OffsetCallKernel(KernelSpec spec, NoiseGenerator generator) {
+            super(spec);
             this.generator = generator;
         }
 
@@ -844,7 +844,7 @@ public abstract class PrimitiveKernel {
         private final NoiseGenerator generator;
 
         GenericKernel(NoiseGenerator generator) {
-            super(PrimitiveKind.GENERIC, null, 0D, 0D, SignatureHasher.unique());
+            super(new KernelSpec(PrimitiveKind.GENERIC, null, 0D, 0D, SignatureHasher.unique()));
             this.generator = generator;
         }
 

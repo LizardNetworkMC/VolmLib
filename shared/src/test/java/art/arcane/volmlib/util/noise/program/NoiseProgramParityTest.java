@@ -9,6 +9,10 @@ import org.junit.Test;
 import java.lang.management.ManagementFactory;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
@@ -23,12 +27,33 @@ public class NoiseProgramParityTest {
         long seed = 1337L;
         for (ProgramShapes.Shape shape : ProgramShapes.all()) {
             seed += 7919L;
-            ProgramParity.Result result = ProgramParity.check(shape.create(seed), seed, 2500, 1200, 5, 6, 6);
+            ProgramParity.Result result = ProgramParity.check(shape.create(seed), seed, new ProgramParity.Budget(2500, 1200, 5, 6, 6));
             if (result.totalMismatches() != 0L) {
                 failures.add(shape.name() + ": " + result.totalMismatches() + " mismatches, first " + result.firstMismatch);
             }
         }
         assertTrue(String.join("\n", failures), failures.isEmpty());
+    }
+
+    @Test
+    public void concurrentSamplingMatchesTheGraph() throws InterruptedException, ExecutionException {
+        CNG cng = ProgramShapes.style(CNG.signatureDouble(new RNG(91L), NoiseType.CELLULAR), NoiseType.CELLULAR, 0.6D);
+        NoiseProgram planar = NoiseProgram.compile2D(cng);
+        NoiseProgram volume = NoiseProgram.compileSigned3D(cng);
+        int threads = 6;
+        ExecutorService executor = Executors.newFixedThreadPool(threads);
+        try {
+            List<Future<Long>> results = new ArrayList<>(threads);
+            for (int thread = 0; thread < threads; thread++) {
+                int offset = thread * 4096;
+                results.add(executor.submit(() -> concurrentMismatches(cng, planar, volume, offset)));
+            }
+            for (Future<Long> result : results) {
+                assertEquals(0L, (long) result.get());
+            }
+        } finally {
+            executor.shutdown();
+        }
     }
 
     @Test
@@ -109,6 +134,35 @@ public class NoiseProgramParityTest {
         runFills(planar, volume, scratch, xs, zs, out);
         long allocated = threads.getThreadAllocatedBytes(thread) - before;
         assertTrue("allocated " + allocated + " bytes", allocated < 1024L);
+    }
+
+    private static long concurrentMismatches(CNG cng, NoiseProgram planar, NoiseProgram volume, int offset) {
+        NoiseScratch scratch = new NoiseScratch();
+        double[] grid = new double[16 * 16];
+        double[] lattice = new double[8 * 24 * 8];
+        long mismatches = 0L;
+        for (int round = 0; round < 40; round++) {
+            double x0 = offset + round * 16D;
+            double z0 = -offset - round * 16D;
+            planar.fillGrid2D(scratch, x0, z0, 1D, 16, 16, grid);
+            volume.fillLattice3D(scratch, x0, -32D, z0, 2D, 2D, 2D, 8, 24, 8, lattice);
+            for (int z = 0; z < 16; z++) {
+                for (int x = 0; x < 16; x++) {
+                    double expected = cng.noiseFast2D(x0 + x, z0 + z);
+                    mismatches += Double.doubleToRawLongBits(expected) == Double.doubleToRawLongBits(grid[z * 16 + x]) ? 0 : 1;
+                    mismatches += Double.doubleToRawLongBits(expected) == Double.doubleToRawLongBits(planar.sample2D(x0 + x, z0 + z)) ? 0 : 1;
+                }
+            }
+            for (int y = 0; y < 24; y++) {
+                for (int z = 0; z < 8; z++) {
+                    for (int x = 0; x < 8; x++) {
+                        double expected = cng.noiseFastSigned3D(x0 + x * 2D, -32D + y * 2D, z0 + z * 2D);
+                        mismatches += Double.doubleToRawLongBits(expected) == Double.doubleToRawLongBits(lattice[(y * 8 + z) * 8 + x]) ? 0 : 1;
+                    }
+                }
+            }
+        }
+        return mismatches;
     }
 
     private static void runFills(NoiseProgram planar, NoiseProgram volume, NoiseScratch scratch, double[] xs, double[] zs, double[] out) {

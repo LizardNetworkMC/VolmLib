@@ -19,14 +19,14 @@ final class ProgramParity {
     private ProgramParity() {
     }
 
-    static Result check(CNG cng, long seed, int points2D, int points3D, int grids, int columns, int lattices) {
+    static Result check(CNG cng, long seed, Budget budget) {
         Result result = new Result();
         NoiseProgram planar = NoiseProgram.compile2D(cng);
         NoiseProgram volume = NoiseProgram.compileSigned3D(cng);
         NoiseScratch scratch = new NoiseScratch();
         SplittableRandom random = new SplittableRandom(seed);
-        checkPlanar(result, cng, planar, scratch, random, points2D, grids);
-        checkVolume(result, cng, volume, scratch, random, points3D, columns, lattices);
+        checkPlanar(result, cng, planar, scratch, random, budget);
+        checkVolume(result, cng, volume, scratch, random, budget);
         return result;
     }
 
@@ -58,7 +58,9 @@ final class ProgramParity {
         return coordinate(random);
     }
 
-    private static void checkPlanar(Result result, CNG cng, NoiseProgram program, NoiseScratch scratch, SplittableRandom random, int points, int grids) {
+    private static void checkPlanar(Result result, CNG cng, NoiseProgram program, NoiseScratch scratch, SplittableRandom random, Budget budget) {
+        int points = budget.points2D();
+        int grids = budget.grids();
         double[] xs = new double[points];
         double[] zs = new double[points];
         double[] expected = new double[points];
@@ -102,8 +104,10 @@ final class ProgramParity {
         }
     }
 
-    private static void checkVolume(Result result, CNG cng, NoiseProgram program, NoiseScratch scratch, SplittableRandom random,
-                                    int points, int columns, int lattices) {
+    private static void checkVolume(Result result, CNG cng, NoiseProgram program, NoiseScratch scratch, SplittableRandom random, Budget budget) {
+        int points = budget.points3D();
+        int columns = budget.columns();
+        int lattices = budget.lattices();
         double[] xs = new double[points];
         double[] ys = new double[points];
         double[] zs = new double[points];
@@ -172,6 +176,9 @@ final class ProgramParity {
             NoiseBackends.scalar().fillLattice3D(program, scratch, x0, y0, z0, stepX, stepY, stepZ, nx, ny, nz, latticeActual);
             result.compare(9, latticeExpected, latticeActual, total, latticeX, latticeZ, latticeY);
         }
+    }
+
+    record Budget(int points2D, int points3D, int grids, int columns, int lattices) {
     }
 
     static final class Result {

@@ -14,11 +14,12 @@ public final class NoiseProgramExactness {
     }
 
     public static void main(String[] args) throws InterruptedException, ExecutionException {
-        int points2D = args.length > 0 ? Integer.parseInt(args[0]) : 1_000_000;
-        int points3D = args.length > 1 ? Integer.parseInt(args[1]) : 1_000_000;
-        int grids = args.length > 2 ? Integer.parseInt(args[2]) : 4_000;
-        int columns = args.length > 3 ? Integer.parseInt(args[3]) : 6_000;
-        int lattices = args.length > 4 ? Integer.parseInt(args[4]) : 600;
+        ProgramParity.Budget budget = new ProgramParity.Budget(
+                args.length > 0 ? Integer.parseInt(args[0]) : 1_000_000,
+                args.length > 1 ? Integer.parseInt(args[1]) : 1_000_000,
+                args.length > 2 ? Integer.parseInt(args[2]) : 4_000,
+                args.length > 3 ? Integer.parseInt(args[3]) : 6_000,
+                args.length > 4 ? Integer.parseInt(args[4]) : 600);
         int threads = args.length > 5 ? Integer.parseInt(args[5]) : 4;
         List<ProgramShapes.Shape> shapes = ProgramShapes.all();
         ExecutorService executor = Executors.newFixedThreadPool(threads);
@@ -27,7 +28,7 @@ public final class NoiseProgramExactness {
         for (ProgramShapes.Shape shape : shapes) {
             long shapeSeed = seed;
             seed += 104729L;
-            rows.add(executor.submit(() -> row(shape, shapeSeed, points2D, points3D, grids, columns, lattices)));
+            rows.add(executor.submit(() -> row(shape, shapeSeed, budget)));
         }
         System.out.println("shape | representable | " + String.join(" | ", ProgramParity.APIS) + " | total compared | total mismatches");
         for (Future<String> row : rows) {
@@ -36,10 +37,10 @@ public final class NoiseProgramExactness {
         executor.shutdown();
     }
 
-    private static String row(ProgramShapes.Shape shape, long seed, int points2D, int points3D, int grids, int columns, int lattices) {
+    private static String row(ProgramShapes.Shape shape, long seed, ProgramParity.Budget budget) {
         CNG cng = shape.create(seed);
         boolean representable = NoiseProgram.compile2D(cng).isExactlyRepresentable() && NoiseProgram.compileSigned3D(cng).isExactlyRepresentable();
-        ProgramParity.Result result = ProgramParity.check(cng, seed, points2D, points3D, grids, columns, lattices);
+        ProgramParity.Result result = ProgramParity.check(cng, seed, budget);
         StringBuilder line = new StringBuilder(shape.name()).append(" | ").append(representable ? "yes" : "no");
         for (int api = 0; api < ProgramParity.APIS.length; api++) {
             line.append(" | ").append(result.mismatches[api]).append('/').append(result.compared[api]);
