@@ -123,7 +123,8 @@ public abstract class PackedJar extends DefaultTask {
         Map<String, byte[]> bootstrap = bootstrapClasses();
         PackOptions options = new PackOptions(getEntrypoints().get(), getJarAccessors().get(),
                 new NativeOptions(getNativeArtifacts().get(), getNativeManifestPath().get(), getNativeResourceDirectory().get()),
-                getMaximumBytes().getOrNull());
+                getMaximumBytes().getOrNull(), getProject().getGradle().getGradleUserHomeDir().toPath()
+                        .resolve("caches/volmit-packaging/compression"));
         PackResult result = writePackedJar(source, output, bootstrap, options);
         getLogger().lifecycle("{}: selected {} ({} -> {} bytes); {} bootstrap classes retained", output.getFileName(),
                 result.compressed() ? "XZ" : "ordinary jar", result.ordinaryBytes(), Files.size(output),
@@ -224,12 +225,32 @@ public abstract class PackedJar extends DefaultTask {
         boolean compressedRuntime = packed.length < ordinary.length;
         byte[] selected = compressedRuntime ? packed : ordinary;
         if (options.maximumBytes() != null && selected.length > options.maximumBytes()) {
+            byte[] compact = compactOrdinaryJar(ordinary, output, options.compressionCache());
+            if (compact.length < selected.length) {
+                selected = compact;
+                compressedRuntime = false;
+            }
+        }
+        if (options.maximumBytes() != null && selected.length > options.maximumBytes()) {
             throw new IOException("Selected jar exceeds " + options.maximumBytes() + " byte budget: " + selected.length);
         }
         Files.createDirectories(output.toAbsolutePath().getParent());
         Files.write(output, selected);
         return new PackResult(retained.size() + relocated.size(), descriptor.entrypoints(), compressedRuntime,
                 ordinary.length);
+    }
+
+    private static byte[] compactOrdinaryJar(byte[] ordinary, Path output, Path compressionCache) throws IOException {
+        Files.createDirectories(output.toAbsolutePath().getParent());
+        Path temporary = Files.createTempFile(output.toAbsolutePath().getParent(), "ordinary-", ".jar");
+        try {
+            Files.write(temporary, ordinary);
+            JarCompactor.compact(temporary.toFile(), new JarCompactor.CompactionOptions(
+                    Set.of(), false, false, true, compressionCache));
+            return Files.readAllBytes(temporary);
+        } finally {
+            Files.deleteIfExists(temporary);
+        }
     }
 
     static Descriptor descriptor(Map<String, byte[]> contents, List<String> configured) throws IOException {
@@ -586,7 +607,8 @@ public abstract class PackedJar extends DefaultTask {
     record Descriptor(String pluginName, List<String> entrypoints) {
     }
 
-    record PackOptions(List<String> entrypoints, List<String> jarAccessors, NativeOptions natives, Long maximumBytes) {
+    record PackOptions(List<String> entrypoints, List<String> jarAccessors, NativeOptions natives, Long maximumBytes,
+                       Path compressionCache) {
     }
 
     record NativeOptions(Map<String, File> artifacts, String manifestPath, String resourceDirectory) {
