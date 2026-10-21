@@ -43,6 +43,7 @@ public class DataContainer<T> {
 
     private volatile Palette<T> palette;
     private volatile DataBits data;
+    private volatile int version;
     private final int length;
     private final Writable<T> writer;
 
@@ -221,6 +222,7 @@ public class DataContainer<T> {
 
     public void writeDos(DataOutputStream dos) throws IOException {
         write.lock();
+        version++;
         try {
             trim();
             Varint.writeUnsignedVarInt(length, dos);
@@ -229,6 +231,7 @@ public class DataContainer<T> {
             writeData(dos);
             dos.flush();
         } finally {
+            version++;
             write.unlock();
         }
     }
@@ -296,25 +299,12 @@ public class DataContainer<T> {
 
     public void set(int position, T t) {
         Validate.inclusiveBetween(0L, (length - 1L), position);
-        read.lock();
-        try {
-            boolean compact = data.getSize() != length;
-            if (compact && (position & 0x333) != 0) {
-                if (t == null) {
-                    return;
-                }
-            } else {
-                int id = palette.id(t);
-                if (id >= 0) {
-                    data.set(compact ? compactPosition(position) : position, id);
-                    return;
-                }
-            }
-        } finally {
-            read.unlock();
+        if (trySetOptimistic(position, t)) {
+            return;
         }
 
         write.lock();
+        version++;
         try {
             if (data.getSize() != length && (position & 0x333) != 0) {
                 data = expandedData(data, palette.bits(), length);
@@ -326,8 +316,114 @@ public class DataContainer<T> {
             updateBits();
             data.set(data.getSize() != length ? compactPosition(position) : position, id);
         } finally {
+            version++;
             write.unlock();
         }
+    }
+
+    /**
+     * Sets every position whose bit is set in {@code bits} (bit {@code p & 63} of word {@code p >>> 6}) to
+     * {@code value}, resolving the palette entry once under a single write lock. A {@code null} value clears them.
+     */
+    public void fillFromBits(long[] bits, T value) {
+        int words = (length + Long.SIZE - 1) >>> 6;
+        if (bits.length != words) {
+            throw new IllegalArgumentException("Bit set holds " + bits.length + " words for " + length + " positions");
+        }
+        int tail = length & (Long.SIZE - 1);
+        if (tail != 0 && (bits[words - 1] >>> tail) != 0L) {
+            throw new IllegalArgumentException("Bit set marks positions beyond " + length);
+        }
+        if (isEmpty(bits)) {
+            return;
+        }
+        write.lock();
+        version++;
+        try {
+            if (value == null) {
+                clearBits(bits);
+                return;
+            }
+            if (data.getSize() != length && hasUnalignedBits(bits)) {
+                data = expandedData(data, palette.bits(), length);
+            }
+            int id = palette.id(value);
+            if (id < 0) {
+                id = palette.add(value);
+            }
+            updateBits();
+            DataBits localData = data;
+            boolean compact = localData.getSize() != length;
+            for (int word = 0; word < words; word++) {
+                long remaining = bits[word];
+                while (remaining != 0L) {
+                    int position = (word << 6) | Long.numberOfTrailingZeros(remaining);
+                    remaining &= remaining - 1L;
+                    localData.set(compact ? compactPosition(position) : position, id);
+                }
+            }
+        } finally {
+            version++;
+            write.unlock();
+        }
+    }
+
+    private boolean trySetOptimistic(int position, T t) {
+        int stamp = version;
+        if ((stamp & 1) != 0) {
+            return false;
+        }
+        DataBits localData = data;
+        boolean compact = localData.getSize() != length;
+        if (compact && (position & 0x333) != 0) {
+            return t == null && version == stamp;
+        }
+        int id = palette.id(t);
+        if (id < 0 || version != stamp) {
+            return false;
+        }
+        localData.set(compact ? compactPosition(position) : position, id);
+        return version == stamp;
+    }
+
+    private void clearBits(long[] bits) {
+        DataBits localData = data;
+        boolean compact = localData.getSize() != length;
+        for (int word = 0; word < bits.length; word++) {
+            long remaining = bits[word];
+            while (remaining != 0L) {
+                int position = (word << 6) | Long.numberOfTrailingZeros(remaining);
+                remaining &= remaining - 1L;
+                if (!compact) {
+                    localData.set(position, 0);
+                } else if ((position & 0x333) == 0) {
+                    localData.set(compactPosition(position), 0);
+                }
+            }
+        }
+    }
+
+    private static boolean isEmpty(long[] bits) {
+        for (long word : bits) {
+            if (word != 0L) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private static boolean hasUnalignedBits(long[] bits) {
+        for (int word = 0; word < bits.length; word++) {
+            long remaining = bits[word];
+            while (remaining != 0L) {
+                int position = (word << 6) | Long.numberOfTrailingZeros(remaining);
+                if ((position & 0x333) != 0) {
+                    return true;
+                }
+                remaining &= remaining - 1L;
+            }
+        }
+        return false;
     }
 
     @SuppressWarnings("NonAtomicOperationOnVolatileField")
@@ -410,6 +506,15 @@ public class DataContainer<T> {
 
     public T get(int position) {
         Validate.inclusiveBetween(0L, (length - 1L), position);
+        int stamp = version;
+        if ((stamp & 1) == 0) {
+            DataBits localData = data;
+            Palette<T> localPalette = palette;
+            int id = logicalId(localData, position);
+            if (version == stamp) {
+                return id <= 0 ? null : localPalette.get(id);
+            }
+        }
         read.lock();
         try {
             DataBits localData = data;

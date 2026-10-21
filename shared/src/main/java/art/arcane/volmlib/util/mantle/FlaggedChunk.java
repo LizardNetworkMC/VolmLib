@@ -7,41 +7,42 @@ import art.arcane.volmlib.util.parallel.AtomicBooleanArray;
 import java.io.DataInput;
 import java.io.DataOutput;
 import java.io.IOException;
-import java.util.concurrent.locks.ReentrantLock;
+import java.lang.invoke.MethodHandles;
+import java.lang.invoke.VarHandle;
 
 public abstract class FlaggedChunk {
-    private final AtomicBooleanArray flags = new AtomicBooleanArray(MantleFlag.MAX_ORDINAL + 1);
-    private volatile ReentrantLock[] locks;
+    private static final int FLAG_COUNT = MantleFlag.MAX_ORDINAL + 1;
+    private static final int CLAIM_WORDS = (FLAG_COUNT + Long.SIZE - 1) >>> 6;
+    private static final VarHandle CLAIMS = MethodHandles.arrayElementVarHandle(long[].class);
+    private static final VarHandle CLAIM_MONITOR;
+
+    static {
+        try {
+            CLAIM_MONITOR = MethodHandles.lookup().findVarHandle(FlaggedChunk.class, "claimMonitor", Object.class);
+        } catch (ReflectiveOperationException e) {
+            throw new ExceptionInInitializerError(e);
+        }
+    }
+
+    private final AtomicBooleanArray flags = new AtomicBooleanArray(FLAG_COUNT);
+    private final long[] claims = new long[CLAIM_WORDS];
+    private volatile Object claimMonitor;
+    private volatile int claimWaiters;
 
     protected FlaggedChunk() {
     }
 
     public abstract boolean isClosed();
 
-    private ReentrantLock[] ensureLocks() {
-        ReentrantLock[] arr = locks;
-        if (arr != null) return arr;
-        synchronized (this) {
-            arr = locks;
-            if (arr != null) return arr;
-            arr = new ReentrantLock[flags.length()];
-            for (int i = 0; i < arr.length; i++) {
-                arr[i] = new ReentrantLock();
-            }
-            locks = arr;
-            return arr;
-        }
-    }
-
     protected void copyFrom(FlaggedChunk other, Runnable action) {
-        lockAll();
+        claimAll();
         try {
             action.run();
             for (int i = 0; i < flags.length(); i++) {
                 flags.set(i, other.flags.get(i));
             }
         } finally {
-            unlockAll();
+            releaseAll();
         }
     }
 
@@ -56,28 +57,70 @@ public abstract class FlaggedChunk {
         flags.set(flag.ordinal(), value);
     }
 
-    public void raiseFlagSuspend(MantleFlag flag, Runnable task) {
+    public boolean isClaimed(MantleFlag flag) {
+        return claimed(flag.ordinal());
+    }
+
+    /**
+     * Claims the right to raise {@code flag} without waiting. The caller that gets {@code true} runs the flag's work
+     * and then calls {@link #completeClaim} or, when the work failed, {@link #abandonClaim}. Returns {@code false}
+     * when the flag is already raised or another caller holds the claim.
+     */
+    public boolean tryClaim(MantleFlag flag) {
         if (isClosed()) {
             throw new MantleClosedException("Chunk is closed!");
         }
-        if (isFlagged(flag)) {
-            return;
-        }
-
         int index = flag.ordinal();
-        ReentrantLock lock = ensureLocks()[index];
-        lock.lock();
-        try {
-            if (isFlagged(flag)) {
-                return;
-            }
+        if (flags.get(index) || !claim(index)) {
+            return false;
+        }
+        if (flags.get(index)) {
+            release(index);
+            return false;
+        }
+        return true;
+    }
 
-            task.run();
+    public void completeClaim(MantleFlag flag) {
+        int index = flag.ordinal();
+        try {
             if (flags.getAndSet(index, true)) {
                 throw new IllegalStateException("Flag " + flag.name() + " was already set after task ran!");
             }
         } finally {
-            lock.unlock();
+            release(index);
+        }
+    }
+
+    public void abandonClaim(MantleFlag flag) {
+        release(flag.ordinal());
+    }
+
+    public void raiseFlagSuspend(MantleFlag flag, Runnable task) {
+        if (isClosed()) {
+            throw new MantleClosedException("Chunk is closed!");
+        }
+        int index = flag.ordinal();
+        while (!flags.get(index)) {
+            if (!claim(index)) {
+                awaitClaim(index);
+                continue;
+            }
+            boolean raised = false;
+            try {
+                if (flags.get(index)) {
+                    return;
+                }
+                task.run();
+                raised = true;
+            } finally {
+                if (raised) {
+                    completeClaim(flag);
+                } else {
+                    release(index);
+                }
+            }
+            return;
         }
     }
 
@@ -136,18 +179,105 @@ public abstract class FlaggedChunk {
         }
     }
 
-    private void lockAll() {
-        ReentrantLock[] arr = ensureLocks();
-        for (ReentrantLock lock : arr) {
-            lock.lock();
+    private boolean claimed(int index) {
+        return ((long) CLAIMS.getVolatile(claims, index >>> 6) & (1L << index)) != 0L;
+    }
+
+    private boolean claim(int index) {
+        long bit = 1L << index;
+        int word = index >>> 6;
+        long current = (long) CLAIMS.getVolatile(claims, word);
+        while ((current & bit) == 0L) {
+            long witness = (long) CLAIMS.compareAndExchange(claims, word, current, current | bit);
+            if (witness == current) {
+                return true;
+            }
+            current = witness;
+        }
+        return false;
+    }
+
+    private void release(int index) {
+        CLAIMS.getAndBitwiseAnd(claims, index >>> 6, ~(1L << index));
+        signalClaimWaiters();
+    }
+
+    private void claimAll() {
+        for (int word = 0; word < CLAIM_WORDS; word++) {
+            while (!CLAIMS.compareAndSet(claims, word, 0L, -1L)) {
+                awaitWord(word);
+            }
         }
     }
 
-    private void unlockAll() {
-        ReentrantLock[] arr = locks;
-        if (arr == null) return;
-        for (int i = arr.length - 1; i >= 0; i--) {
-            arr[i].unlock();
+    private void releaseAll() {
+        for (int word = 0; word < CLAIM_WORDS; word++) {
+            CLAIMS.setVolatile(claims, word, 0L);
         }
+        signalClaimWaiters();
+    }
+
+    private void signalClaimWaiters() {
+        if (claimWaiters == 0) {
+            return;
+        }
+        Object monitor = claimMonitor;
+        synchronized (monitor) {
+            monitor.notifyAll();
+        }
+    }
+
+    private void awaitClaim(int index) {
+        Object monitor = claimMonitor();
+        boolean interrupted = false;
+        synchronized (monitor) {
+            claimWaiters++;
+            try {
+                while (claimed(index) && !flags.get(index)) {
+                    try {
+                        monitor.wait();
+                    } catch (InterruptedException interruption) {
+                        interrupted = true;
+                    }
+                }
+            } finally {
+                claimWaiters--;
+            }
+        }
+        if (interrupted) {
+            Thread.currentThread().interrupt();
+        }
+    }
+
+    private void awaitWord(int word) {
+        Object monitor = claimMonitor();
+        boolean interrupted = false;
+        synchronized (monitor) {
+            claimWaiters++;
+            try {
+                while ((long) CLAIMS.getVolatile(claims, word) != 0L) {
+                    try {
+                        monitor.wait();
+                    } catch (InterruptedException interruption) {
+                        interrupted = true;
+                    }
+                }
+            } finally {
+                claimWaiters--;
+            }
+        }
+        if (interrupted) {
+            Thread.currentThread().interrupt();
+        }
+    }
+
+    private Object claimMonitor() {
+        Object monitor = claimMonitor;
+        if (monitor != null) {
+            return monitor;
+        }
+        Object created = new Object();
+        Object witness = CLAIM_MONITOR.compareAndExchange(this, (Object) null, created);
+        return witness == null ? created : witness;
     }
 }
