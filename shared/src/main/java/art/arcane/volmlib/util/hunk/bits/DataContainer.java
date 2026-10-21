@@ -321,10 +321,6 @@ public class DataContainer<T> {
         }
     }
 
-    /**
-     * Sets every position whose bit is set in {@code bits} (bit {@code p & 63} of word {@code p >>> 6}) to
-     * {@code value}, resolving the palette entry once under a single write lock. A {@code null} value clears them.
-     */
     public void fillFromBits(long[] bits, T value) {
         int words = (length + Long.SIZE - 1) >>> 6;
         if (bits.length != words) {

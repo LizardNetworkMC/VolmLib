@@ -61,11 +61,6 @@ public abstract class FlaggedChunk {
         return claimed(flag.ordinal());
     }
 
-    /**
-     * Claims the right to raise {@code flag} without waiting. The caller that gets {@code true} runs the flag's work
-     * and then calls {@link #completeClaim} or, when the work failed, {@link #abandonClaim}. Returns {@code false}
-     * when the flag is already raised or another caller holds the claim.
-     */
     public boolean tryClaim(MantleFlag flag) {
         if (isClosed()) {
             throw new MantleClosedException("Chunk is closed!");
