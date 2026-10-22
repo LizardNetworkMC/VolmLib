@@ -1,32 +1,16 @@
 use std::arch::aarch64::*;
 
 use crate::kernels::{
-    val_coord2, Cellular, DISTANCE_EUCLIDEAN, DISTANCE_MANHATTAN, DISTANCE_NATURAL, F2, F3, G2, G3, G33, LONGERP_HERMITE, LONGERP_QULONGIC,
-    RETURN_CELL_VALUE, RETURN_DISTANCE, RETURN_DISTANCE2, RETURN_DISTANCE2_ADD, RETURN_DISTANCE2_DIV, RETURN_DISTANCE2_MUL,
-    RETURN_DISTANCE2_SUB,
+    val_coord2, Cellular, DISTANCE_EUCLIDEAN, DISTANCE_MANHATTAN, DISTANCE_NATURAL, F2, F3, G2, G3, G33, GRAD2_X_BYTES as GRAD2_X,
+    GRAD2_Y_BYTES as GRAD2_Y, GRAD3_X_BYTES as GRAD3_X, GRAD3_Y_BYTES as GRAD3_Y, GRAD3_Z_BYTES as GRAD3_Z, LONGERP_HERMITE,
+    LONGERP_QULONGIC, RETURN_CELL_VALUE, RETURN_DISTANCE, RETURN_DISTANCE2, RETURN_DISTANCE2_ADD, RETURN_DISTANCE2_DIV,
+    RETURN_DISTANCE2_MUL, RETURN_DISTANCE2_SUB,
 };
 use crate::tables::{CELL_2D_X, CELL_2D_Y, CELL_3D_X, CELL_3D_Y, CELL_3D_Z};
 
-const GRAD2_X: [u8; 16] = gradient_bytes::<16>(&[-1, 1, -1, 1, 0, -1, 0, 1]);
-const GRAD2_Y: [u8; 16] = gradient_bytes::<16>(&[-1, -1, 1, 1, -1, 0, 1, 0]);
-const GRAD3_X: [u8; 32] = gradient_bytes::<32>(&[1, -1, 1, -1, 1, -1, 1, -1, 0, 0, 0, 0, 1, 0, -1, 0]);
-const GRAD3_Y: [u8; 32] = gradient_bytes::<32>(&[1, 1, -1, -1, 0, 0, 0, 0, 1, -1, 1, -1, 1, -1, 1, -1]);
-const GRAD3_Z: [u8; 32] = gradient_bytes::<32>(&[0, 0, 0, 0, 1, 1, -1, -1, 1, 1, -1, -1, 0, 1, 0, -1]);
 const LANE_LOW: [u8; 16] = [16, 16, 16, 16, 16, 16, 0, 0, 16, 16, 16, 16, 16, 16, 4, 4];
 const LANE_HIGH: [u8; 16] = [16, 16, 16, 16, 16, 16, 8, 8, 16, 16, 16, 16, 16, 16, 12, 12];
 const LANE_BIAS: [u8; 16] = [0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0, 1, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0, 1];
-
-const fn gradient_bytes<const N: usize>(values: &[i8]) -> [u8; N] {
-    let mut table: [u8; N] = [0; N];
-    let mut index: usize = 0;
-    while index < values.len() {
-        let bits: u64 = (values[index] as f64).to_bits();
-        table[index * 2] = (bits >> 48) as u8;
-        table[index * 2 + 1] = (bits >> 56) as u8;
-        index += 1;
-    }
-    table
-}
 
 #[derive(Clone, Copy)]
 struct Pair {

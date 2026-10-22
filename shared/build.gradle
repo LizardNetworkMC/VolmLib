@@ -4,6 +4,12 @@ import org.gradle.api.attributes.java.TargetJvmVersion
 import org.gradle.api.tasks.compile.JavaCompile
 import org.gradle.jvm.toolchain.JavaLanguageVersion
 
+import java.nio.charset.StandardCharsets
+import java.nio.file.Files
+import java.nio.file.StandardCopyOption
+import java.security.MessageDigest
+import java.util.HexFormat
+
 plugins {
     id 'java-library'
     id 'maven-publish'
@@ -219,15 +225,44 @@ tasks.named('compileGpuNoiseTestJava', JavaCompile).configure {
 String nativeNoiseSystem = System.getProperty('os.name').toLowerCase(Locale.ROOT)
 String nativeNoiseOs = nativeNoiseSystem.contains('mac') ? 'macos' : nativeNoiseSystem.contains('win') ? 'windows' : 'linux'
 String nativeNoiseArch = ['aarch64', 'arm64'].contains(System.getProperty('os.arch')) ? 'aarch64' : 'x86_64'
-String nativeNoiseName = nativeNoiseOs == 'macos' ? 'libvolmlib_noise.dylib' : nativeNoiseOs == 'windows' ? 'volmlib_noise.dll' : 'libvolmlib_noise.so'
+String nativeNoisePlatform = "${nativeNoiseOs}-${nativeNoiseArch}"
+Map<String, String> nativeNoiseLibraryNames = [macos: 'libvolmlib_noise.dylib', linux: 'libvolmlib_noise.so', windows: 'volmlib_noise.dll']
+String nativeNoiseName = nativeNoiseLibraryNames[nativeNoiseOs]
+Map<String, String> nativeNoiseTargets = [
+    'macos-aarch64' : 'aarch64-apple-darwin',
+    'macos-x86_64'  : 'x86_64-apple-darwin',
+    'linux-aarch64' : 'aarch64-unknown-linux-gnu',
+    'linux-x86_64'  : 'x86_64-unknown-linux-gnu',
+    'windows-x86_64': 'x86_64-pc-windows-gnu'
+]
+Map<String, String> nativeNoiseZigTargets = [
+    'linux-aarch64': 'aarch64-unknown-linux-gnu.2.17',
+    'linux-x86_64' : 'x86_64-unknown-linux-gnu.2.17'
+]
 boolean includeGpuNoise = providers.gradleProperty('includeGpuNoise').map { String enabled -> Boolean.parseBoolean(enabled) }.getOrElse(false)
-boolean includeNativeNoise = includeGpuNoise || providers.gradleProperty('includeNativeNoise').map { String enabled -> Boolean.parseBoolean(enabled) }.getOrElse(false)
+boolean buildNativeNoise = includeGpuNoise || providers.gradleProperty('buildNativeNoise').map { String enabled -> Boolean.parseBoolean(enabled) }.getOrElse(false)
 File nativeNoiseCrate = file('native/noise')
+File nativeNoisePrebuilt = file('native/noise/prebuilt')
+File nativeNoiseStamp = new File(nativeNoisePrebuilt, 'sources.sha256')
 File nativeNoiseTarget = layout.buildDirectory.dir('native/noise').get().asFile
 Provider<Directory> nativeNoiseResources = layout.buildDirectory.dir('generated/nativeNoiseResources')
 File nativeNoiseLibrary = new File(nativeNoiseTarget, "cpu/release/${nativeNoiseName}")
 File nativeNoiseGpuLibrary = new File(nativeNoiseTarget, "gpu/release/${nativeNoiseName}")
 FileCollection nativeNoiseSources = files(fileTree('native/noise/src'), 'native/noise/Cargo.toml', 'native/noise/Cargo.lock')
+File nativeNoiseWindowsLinker = file('native/noise/zigcc-windows.sh')
+FileCollection nativeNoiseCpuSources = files(fileTree('native/noise/src') { exclude('gpu*.rs', '*.wgsl') }, 'native/noise/Cargo.toml', 'native/noise/Cargo.lock', nativeNoiseWindowsLinker)
+
+String nativeNoiseDigest(FileCollection sources, File crate) {
+    MessageDigest digest = MessageDigest.getInstance('SHA-256')
+    List<File> ordered = sources.files.sort { File file -> crate.toPath().relativize(file.toPath()).toString().replace('\\', '/') }
+    for (File source : ordered) {
+        digest.update(crate.toPath().relativize(source.toPath()).toString().replace('\\', '/').getBytes(StandardCharsets.UTF_8))
+        digest.update((byte) 0)
+        digest.update(source.getText('UTF-8').replace('\r\n', '\n').getBytes(StandardCharsets.UTF_8))
+        digest.update((byte) 0)
+    }
+    return HexFormat.of().formatHex(digest.digest())
+}
 
 tasks.register('buildNativeNoise', Exec) {
     workingDir(nativeNoiseCrate)
@@ -244,6 +279,61 @@ tasks.register('buildNativeNoiseGpu', Exec) {
     commandLine('cargo', 'build', '--release', '--locked', '--features', 'gpu', '--target-dir', new File(nativeNoiseTarget, 'gpu').absolutePath)
 }
 
+List<TaskProvider<Exec>> nativeNoisePlatformBuilds = nativeNoiseTargets.collect { String platform, String target ->
+    String zigTarget = nativeNoiseZigTargets[platform]
+    String taskSuffix = platform.split('-').collect { String part -> part.capitalize() }.join('')
+    tasks.register("buildNativeNoise${taskSuffix}", Exec) {
+        group = 'build'
+        description = "Builds the ${platform} native noise library for native/noise/prebuilt."
+        workingDir(nativeNoiseCrate)
+        inputs.files(nativeNoiseCpuSources)
+        outputs.file(new File(nativeNoiseTarget, "prebuilt/${target}/release/${nativeNoiseLibraryNames[platform.split('-')[0]]}"))
+        if (platform == 'windows-x86_64') {
+            environment('CARGO_TARGET_X86_64_PC_WINDOWS_GNU_LINKER', nativeNoiseWindowsLinker.absolutePath)
+        }
+        List<String> command = zigTarget == null ? ['cargo', 'build'] : ['cargo', 'zigbuild']
+        command.addAll(['--release', '--locked', '--target', zigTarget ?: target, '--target-dir', new File(nativeNoiseTarget, 'prebuilt').absolutePath])
+        commandLine(command)
+    }
+}
+
+tasks.register('buildNativeNoisePrebuilt') {
+    group = 'build'
+    description = 'Rebuilds every packaged native noise library into native/noise/prebuilt (macOS host with cargo-zigbuild and zig on PATH).'
+    dependsOn(nativeNoisePlatformBuilds)
+    doLast {
+        nativeNoiseTargets.each { String platform, String target ->
+            String library = nativeNoiseLibraryNames[platform.split('-')[0]]
+            File built = new File(nativeNoiseTarget, "prebuilt/${target}/release/${library}")
+            File packaged = new File(nativeNoisePrebuilt, "${platform}/${library}")
+            packaged.parentFile.mkdirs()
+            Files.copy(built.toPath(), packaged.toPath(), StandardCopyOption.REPLACE_EXISTING)
+        }
+        nativeNoiseStamp.text = nativeNoiseDigest(nativeNoiseCpuSources, nativeNoiseCrate) + '\n'
+    }
+}
+
+tasks.register('verifyNativeNoisePrebuilt') {
+    group = 'verification'
+    description = 'Fails when native/noise/prebuilt does not match the current native noise crate sources.'
+    inputs.files(nativeNoiseCpuSources).withPathSensitivity(PathSensitivity.RELATIVE)
+    inputs.dir(nativeNoisePrebuilt).withPathSensitivity(PathSensitivity.RELATIVE)
+    doLast {
+        List<String> missing = nativeNoiseTargets.keySet().findAll { String platform ->
+            !new File(nativeNoisePrebuilt, "${platform}/${nativeNoiseLibraryNames[platform.split('-')[0]]}").isFile()
+        }.toList()
+        if (!missing.isEmpty()) {
+            throw new GradleException("native/noise/prebuilt is missing ${missing.join(', ')}; run ./gradlew :shared:buildNativeNoisePrebuilt")
+        }
+        String recorded = nativeNoiseStamp.isFile() ? nativeNoiseStamp.getText('UTF-8').trim() : ''
+        if (recorded != nativeNoiseDigest(nativeNoiseCpuSources, nativeNoiseCrate)) {
+            throw new GradleException('native/noise/prebuilt was built from different crate sources; run ./gradlew :shared:buildNativeNoisePrebuilt')
+        }
+    }
+}
+
+tasks.named('check').configure { dependsOn(tasks.named('verifyNativeNoisePrebuilt')) }
+
 tasks.register('testNativeNoise', Exec) {
     workingDir(nativeNoiseCrate)
     inputs.files(nativeNoiseSources)
@@ -255,15 +345,26 @@ tasks.register('testNativeNoise', Exec) {
 }
 
 tasks.register('packageNativeNoise', Sync) {
-    dependsOn(tasks.named(includeGpuNoise ? 'buildNativeNoiseGpu' : 'buildNativeNoise'))
-    from(includeGpuNoise ? nativeNoiseGpuLibrary : nativeNoiseLibrary) {
-        into("art/arcane/volmlib/native/${nativeNoiseOs}-${nativeNoiseArch}")
+    from(nativeNoisePrebuilt) {
+        include('*/*')
+        if (buildNativeNoise) {
+            exclude("${nativeNoisePlatform}/**")
+        }
+        into('art/arcane/volmlib/native')
+    }
+    if (buildNativeNoise) {
+        dependsOn(tasks.named(includeGpuNoise ? 'buildNativeNoiseGpu' : 'buildNativeNoise'))
+        from(includeGpuNoise ? nativeNoiseGpuLibrary : nativeNoiseLibrary) {
+            into("art/arcane/volmlib/native/${nativeNoisePlatform}")
+        }
     }
     into(nativeNoiseResources)
 }
 
 tasks.named('jar').configure {
+    dependsOn(tasks.named('packageNativeNoise'))
     from(sourceSets.nativeNoise.output)
+    from(nativeNoiseResources)
 }
 
 tasks.named('sourcesJar').configure {
@@ -274,22 +375,15 @@ tasks.named('sourcesJar').configure {
     }
 }
 
-if (includeNativeNoise) {
-    tasks.named('jar').configure {
-        dependsOn(tasks.named('packageNativeNoise'))
-        from(nativeNoiseResources)
-    }
-    tasks.withType(Test).configureEach {
-        dependsOn(tasks.named('packageNativeNoise'))
-        classpath += files(nativeNoiseResources)
-    }
+if (buildNativeNoise) {
     tasks.named('check').configure { dependsOn(tasks.named('testNativeNoise')) }
 }
 
 tasks.withType(Test).configureEach {
-    classpath += sourceSets.nativeNoise.output
+    dependsOn(tasks.named('packageNativeNoise'))
+    classpath += sourceSets.nativeNoise.output + files(nativeNoiseResources)
     doFirst { systemProperty('volmlib.test.runtimeClasspath', classpath.asPath) }
-    systemProperty('volmlib.test.nativeNoise', Boolean.toString(includeNativeNoise))
+    systemProperty('volmlib.test.nativeNoise', Boolean.toString(nativeNoiseTargets.containsKey(nativeNoisePlatform)))
     systemProperty('volmlib.test.gpuNoise', Boolean.toString(includeGpuNoise))
 }
 
@@ -309,7 +403,7 @@ tasks.register('buildMissingSymbolTestLibrary', Exec) {
     commandLine('rustc', '--edition=2024', '--crate-type=cdylib', 'src/test/rust/missing-symbol.rs', '-o', missingSymbolLibrary.get().asFile.absolutePath)
 }
 
-if (includeNativeNoise) {
+if (buildNativeNoise) {
     tasks.withType(Test).configureEach {
         dependsOn(tasks.named('buildIncorrectBillowTestLibrary'), tasks.named('buildMissingSymbolTestLibrary'))
         systemProperty('volmlib.test.incorrectBillowLibrary', incorrectBillowLibrary.get().asFile.absolutePath)
@@ -344,10 +438,6 @@ tasks.register('testGpuNoise', Test) {
     dependsOn(tasks.named('gpuNoiseTestClasses'))
     testClassesDirs = sourceSets.gpuNoiseTest.output.classesDirs
     classpath = sourceSets.gpuNoiseTest.runtimeClasspath + sourceSets.nativeNoise.output
-    if (includeNativeNoise) {
-        dependsOn(tasks.named('packageNativeNoise'))
-        classpath += files(nativeNoiseResources)
-    }
     jvmArgs('--enable-native-access=ALL-UNNAMED')
 }
 

@@ -54,8 +54,14 @@ public class NativeNoiseBackendTest {
         probe("native", "native", List.of("--enable-native-access=ALL-UNNAMED"), false);
         probe("native", "native", List.of(), false);
         probe("native", "native", List.of("-Dvolmlib.native=on", "-Dvolmlib.noise.backend=native"), false);
-        probe("java", "initialization-failed", List.of("-Dvolmlib.native.library=" + System.getProperty("volmlib.test.missingSymbolLibrary")), false);
         probe("java", "library-load-failed", List.of("-Dvolmlib.native.library=" + Path.of("native/noise/Cargo.toml").toAbsolutePath()), false);
+    }
+
+    @Test
+    public void libraryWithoutTheNoiseSymbolsFallsBack() throws Exception {
+        String library = System.getProperty("volmlib.test.missingSymbolLibrary");
+        Assume.assumeTrue(library != null && supportedHost());
+        probe("java", "initialization-failed", List.of("-Dvolmlib.native.library=" + library), false);
     }
 
     private static boolean supportedHost() {

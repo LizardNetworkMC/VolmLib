@@ -252,6 +252,27 @@ public class PackedJarTest {
     }
 
     @Test
+    void sharedNoiseLibrariesShipOnlyInsideThePayload() throws Exception {
+        Map<String, byte[]> contents = simplePlugin("NoiseLibraries");
+        addCompressibleClasses(contents);
+        byte[] library = new byte[4096];
+        new Random(7L).nextBytes(library);
+        contents.put("art/arcane/volmlib/native/linux-x86_64/libvolmlib_noise.so", library);
+        Path original = directory.resolve("original.jar");
+        Path packed = directory.resolve("packed.jar");
+        Files.write(original, PackedJar.writeJar(contents, false));
+
+        assertTrue(PackedJar.writePackedJar(original, packed, PackedJar.bootstrapClasses(), new PackedJar.PackOptions(
+                List.of(), List.of(), PackedJar.NativeOptions.empty(), PackagingArtifact.SPIGOT_CAP_BYTES,
+                directory.resolve("compression-cache"))).compressed());
+
+        Map<String, byte[]> outer = PackedJar.readJar(packed);
+        assertFalse(outer.containsKey("art/arcane/volmlib/native/linux-x86_64/libvolmlib_noise.so"));
+        assertTrue(outer.containsKey("plugin.yml"));
+        assertArrayEquals(library, payload(outer).get("art/arcane/volmlib/native/linux-x86_64/libvolmlib_noise.so"));
+    }
+
+    @Test
     void rejectsMissingEntrypointAndAlreadyPackedArchive() throws Exception {
         Map<String, byte[]> contents = simplePlugin("Invalid");
         contents.remove("test/Main.class");

@@ -1,8 +1,10 @@
 use crate::kernels::{self, Cellular, LONGERP_HERMITE, LONGERP_LINEAR, LONGERP_QULONGIC};
 #[cfg(target_arch = "aarch64")]
 use crate::neon as vector;
-#[cfg(not(target_arch = "aarch64"))]
+#[cfg(not(any(target_arch = "aarch64", target_arch = "x86_64")))]
 use crate::portable as vector;
+#[cfg(target_arch = "x86_64")]
+use crate::x86 as vector;
 
 pub fn simplex2(seed: i64, xs: &[f64], ys: &[f64], out: &mut [f64]) {
     let length: usize = out.len();
@@ -84,43 +86,9 @@ mod tests {
         DISTANCE_EUCLIDEAN, DISTANCE_MANHATTAN, DISTANCE_NATURAL, RETURN_CELL_VALUE, RETURN_DISTANCE, RETURN_DISTANCE2,
         RETURN_DISTANCE2_ADD, RETURN_DISTANCE2_DIV, RETURN_DISTANCE2_MUL, RETURN_DISTANCE2_SUB,
     };
+    use crate::testing::{assert_bits, Coordinates};
 
     const LENGTH: usize = 1027;
-
-    struct Coordinates {
-        state: u64,
-    }
-
-    impl Coordinates {
-        fn next(&mut self) -> u64 {
-            self.state ^= self.state << 13;
-            self.state ^= self.state >> 7;
-            self.state ^= self.state << 17;
-            self.state
-        }
-
-        fn coordinate(&mut self) -> f64 {
-            let bits: u64 = self.next();
-            let unit: f64 = (bits >> 11) as f64 / (1u64 << 53) as f64;
-            match bits % 5 {
-                0 => unit * 80.0 - 40.0,
-                1 => ((bits >> 20) % 600_000) as f64 - 300_000.0,
-                2 => unit * 600_000.0 - 300_000.0,
-                3 => [0.0, -0.0, 0.5, -0.5, 1.0e-9, -299_999.995, 16.0][(bits >> 32) as usize % 7],
-                _ => (unit * 64.0).floor() * 0.25 - 8.0,
-            }
-        }
-
-        fn fill(&mut self, count: usize) -> Vec<f64> {
-            (0..count).map(|_| self.coordinate()).collect()
-        }
-    }
-
-    fn assert_bits(name: &str, expected: &[f64], actual: &[f64]) {
-        for (index, (left, right)) in expected.iter().zip(actual).enumerate() {
-            assert_eq!(left.to_bits(), right.to_bits(), "{name} differs at {index}: {left} vs {right}");
-        }
-    }
 
     #[test]
     fn vector_gradient_kernels_match_scalar_kernels() {

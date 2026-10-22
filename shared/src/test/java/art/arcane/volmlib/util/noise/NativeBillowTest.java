@@ -33,9 +33,16 @@ public class NativeBillowTest {
         probe("native", true, List.of("-Dvolmlib.noise.nativeBillow=true"));
         probe("native", true, List.of("-Dvolmlib.noise.nativeBillow=true", "-Dvolmlib.test.diagnosticsOff=true"));
         probe("java-library-not-packaged", true, List.of("-Dvolmlib.noise.nativeBillow=true"));
-        probe("java-initialization-failed", true, List.of("-Dvolmlib.noise.nativeBillow=true", "-Dvolmlib.native.library=" + System.getProperty("volmlib.test.missingSymbolLibrary")));
-        probe("java-initialization-failed", true, List.of("-Dvolmlib.noise.nativeBillow=true", "-Dvolmlib.native.library=" + System.getProperty("volmlib.test.incorrectBillowLibrary")));
         probe("java-library-load-failed", true, List.of("-Dvolmlib.noise.nativeBillow=true", "-Dvolmlib.native.library=" + Path.of("native/noise/Cargo.toml").toAbsolutePath()));
+    }
+
+    @Test
+    public void invalidLibrariesFallBackToJava() throws Exception {
+        String missingSymbol = System.getProperty("volmlib.test.missingSymbolLibrary");
+        String incorrectBillow = System.getProperty("volmlib.test.incorrectBillowLibrary");
+        Assume.assumeTrue(missingSymbol != null && incorrectBillow != null && supportedHost());
+        probe("java-initialization-failed", true, List.of("-Dvolmlib.noise.nativeBillow=true", "-Dvolmlib.native.library=" + missingSymbol));
+        probe("java-initialization-failed", true, List.of("-Dvolmlib.noise.nativeBillow=true", "-Dvolmlib.native.library=" + incorrectBillow));
     }
 
     private static boolean supportedHost() {

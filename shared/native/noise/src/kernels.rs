@@ -16,6 +16,11 @@ pub const GRAD2_Y: u32 = pack(&GRAD2, 2, 1, 8);
 pub const GRAD3_X: u32 = pack(&GRAD3, 3, 0, 16);
 pub const GRAD3_Y: u32 = pack(&GRAD3, 3, 1, 16);
 pub const GRAD3_Z: u32 = pack(&GRAD3, 3, 2, 16);
+pub const GRAD2_X_BYTES: [u8; 16] = gradient_bytes::<16>(&GRAD2, 2, 0);
+pub const GRAD2_Y_BYTES: [u8; 16] = gradient_bytes::<16>(&GRAD2, 2, 1);
+pub const GRAD3_X_BYTES: [u8; 32] = gradient_bytes::<32>(&GRAD3, 3, 0);
+pub const GRAD3_Y_BYTES: [u8; 32] = gradient_bytes::<32>(&GRAD3, 3, 1);
+pub const GRAD3_Z_BYTES: [u8; 32] = gradient_bytes::<32>(&GRAD3, 3, 2);
 
 pub const LONGERP_LINEAR: i32 = 0;
 pub const LONGERP_HERMITE: i32 = 1;
@@ -47,6 +52,18 @@ const fn pack(values: &[i8], stride: usize, offset: usize, count: usize) -> u32 
         index += 1;
     }
     packed
+}
+
+const fn gradient_bytes<const N: usize>(values: &[i8], stride: usize, offset: usize) -> [u8; N] {
+    let mut table: [u8; N] = [0; N];
+    let mut index: usize = 0;
+    while index < N / 2 {
+        let bits: u64 = (values[index * stride + offset] as f64).to_bits();
+        table[index * 2] = (bits >> 48) as u8;
+        table[index * 2 + 1] = (bits >> 56) as u8;
+        index += 1;
+    }
+    table
 }
 
 #[inline(always)]

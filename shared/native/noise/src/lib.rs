@@ -10,7 +10,11 @@ mod gpu_wgsl;
 mod kernels;
 #[cfg(target_arch = "aarch64")]
 mod neon;
-#[cfg(not(target_arch = "aarch64"))]
+#[cfg(not(any(target_arch = "aarch64", target_arch = "x86_64")))]
 mod portable;
 mod program;
 mod tables;
+#[cfg(test)]
+mod testing;
+#[cfg(target_arch = "x86_64")]
+mod x86;
