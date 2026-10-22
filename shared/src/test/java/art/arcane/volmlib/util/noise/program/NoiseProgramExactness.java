@@ -30,7 +30,8 @@ public final class NoiseProgramExactness {
             seed += 104729L;
             rows.add(executor.submit(() -> row(shape, shapeSeed, budget)));
         }
-        System.out.println("shape | representable | " + String.join(" | ", ProgramParity.APIS) + " | total compared | total mismatches");
+        System.out.println("noise backend " + NoiseBackends.selected().id() + " (native status " + NoiseBackends.nativeStatus() + ")");
+        System.out.println("shape | representable | backend | " + String.join(" | ", ProgramParity.APIS) + " | total compared | total mismatches");
         for (Future<String> row : rows) {
             System.out.println(row.get());
         }
@@ -39,9 +40,12 @@ public final class NoiseProgramExactness {
 
     private static String row(ProgramShapes.Shape shape, long seed, ProgramParity.Budget budget) {
         CNG cng = shape.create(seed);
-        boolean representable = NoiseProgram.compile2D(cng).isExactlyRepresentable() && NoiseProgram.compileSigned3D(cng).isExactlyRepresentable();
+        NoiseProgram planar = NoiseProgram.compile2D(cng);
+        NoiseProgram volume = NoiseProgram.compileSigned3D(cng);
+        boolean representable = planar.isExactlyRepresentable() && volume.isExactlyRepresentable();
         ProgramParity.Result result = ProgramParity.check(cng, seed, budget);
-        StringBuilder line = new StringBuilder(shape.name()).append(" | ").append(representable ? "yes" : "no");
+        StringBuilder line = new StringBuilder(shape.name()).append(" | ").append(representable ? "yes" : "no")
+                .append(" | ").append(planar.backend().id()).append('/').append(volume.backend().id());
         for (int api = 0; api < ProgramParity.APIS.length; api++) {
             line.append(" | ").append(result.mismatches[api]).append('/').append(result.compared[api]);
         }

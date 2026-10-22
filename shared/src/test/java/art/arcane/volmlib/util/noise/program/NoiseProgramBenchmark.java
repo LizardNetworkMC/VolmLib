@@ -160,7 +160,7 @@ public final class NoiseProgramBenchmark {
         return sorted[sorted.length / 2];
     }
 
-    private static List<Case> cases() {
+    static List<Case> cases() {
         List<Case> cases = new ArrayList<>();
         cases.add(new Case("SIMPLEX", seed -> ProgramShapes.style(new CNG(new RNG(seed), 1D, 1), NoiseType.SIMPLEX, 0.9D)));
         cases.add(new Case("PERLIN", seed -> ProgramShapes.style(new CNG(new RNG(seed), NoiseType.PERLIN, 1D, 1), NoiseType.PERLIN, 0.9D)));
@@ -190,6 +190,6 @@ public final class NoiseProgramBenchmark {
         return cases;
     }
 
-    private record Case(String name, Function<Long, CNG> factory) {
+    record Case(String name, Function<Long, CNG> factory) {
     }
 }

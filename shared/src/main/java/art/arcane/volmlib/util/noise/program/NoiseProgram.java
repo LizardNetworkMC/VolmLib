@@ -47,6 +47,7 @@ public final class NoiseProgram {
     final int[] pairTerms;
     final int[] volumeTerms;
     final boolean[] pairUsed = new boolean[3];
+    Object backendState;
     private final boolean representable;
     private final long signature;
     private final NoiseBackend backend;

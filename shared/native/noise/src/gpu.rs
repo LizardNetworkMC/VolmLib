@@ -1,4 +1,3 @@
-mod cpu;
 
 use std::collections::HashMap;
 use std::sync::atomic::AtomicBool;
@@ -314,7 +313,7 @@ impl Context {
                 || value[1].abs() < 0.001
             {
                 self.corrections += 1;
-                unsigned = cpu::billow_scalar(
+                unsigned = crate::billow::billow_point(
                     seed,
                     xyz[index * 3],
                     0.,
@@ -360,7 +359,7 @@ impl Context {
                     return false;
                 }
                 for index in 0..256 {
-                    let expected: f64 = cpu::billow_scalar(
+                    let expected: f64 = crate::billow::billow_point(
                         seed,
                         xyz[index * 3],
                         0.,
@@ -523,7 +522,7 @@ mod tests {
             0
         );
         for index in 0..count {
-            let expected: f64 = cpu::billow_scalar(
+            let expected: f64 = crate::billow::billow_point(
                 -77,
                 xyz[index * 3],
                 0.,

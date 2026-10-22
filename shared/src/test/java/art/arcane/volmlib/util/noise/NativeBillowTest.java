@@ -17,28 +17,30 @@ public class NativeBillowTest {
     public void disabledAndUnavailableBackendsRemainExact() throws Exception {
         probe("java-disabled", false, List.of("-Dvolmlib.noise.nativeBillow=false"));
         probe("java-disabled", true, List.of("-Dvolmlib.noise.nativeBillow=false"));
-        probe("java-native-access-disabled", false, List.of());
-        probe("java-native-access-disabled", false, List.of("-Dvolmlib.noise.nativeBillow=true"));
-        probe(supportedHost() ? "java-library-missing" : "java-unsupported-platform", true, List.of("-Dvolmlib.noise.nativeBillow=true", "-Dvolmlib.noise.nativeBillowLibrary=" + Path.of("build/missing-native-billow").toAbsolutePath()));
-        probe(supportedHost() ? "java-library-path-not-absolute" : "java-unsupported-platform", true, List.of("-Dvolmlib.noise.nativeBillow=true", "-Dvolmlib.noise.nativeBillowLibrary=relative"));
+        probe("java-off", false, List.of("-Dvolmlib.native=off"));
+        probe("java-off", true, List.of("-Dvolmlib.native=off", "-Dvolmlib.noise.nativeBillow=true"));
+        probe(supportedHost() ? "java-library-missing" : "java-unsupported-platform", true, List.of("-Dvolmlib.noise.nativeBillow=true", "-Dvolmlib.native.library=" + Path.of("build/missing-native-noise").toAbsolutePath()));
+        probe(supportedHost() ? "java-library-path-not-absolute" : "java-unsupported-platform", true, List.of("-Dvolmlib.noise.nativeBillow=true", "-Dvolmlib.native.library=relative"));
         probe("java-unsupported-platform", true, List.of("-Dvolmlib.noise.nativeBillow=true", "-Dos.arch=unsupported"));
+        probe(supportedHost() ? "java-native-access-denied" : "java-unsupported-platform", false, List.of("--illegal-native-access=deny", "-Dvolmlib.native.library=" + Path.of("native/noise/Cargo.toml").toAbsolutePath()));
     }
 
     @Test
     public void packagedNativeBackendRemainsExact() throws Exception {
-        Assume.assumeTrue(Boolean.getBoolean("volmlib.test.nativeBillow") && supportedHost());
+        Assume.assumeTrue(Boolean.getBoolean("volmlib.test.nativeNoise") && supportedHost());
         probe("native", true, List.of());
+        probe("native", false, List.of());
         probe("native", true, List.of("-Dvolmlib.noise.nativeBillow=true"));
         probe("native", true, List.of("-Dvolmlib.noise.nativeBillow=true", "-Dvolmlib.test.diagnosticsOff=true"));
         probe("java-library-not-packaged", true, List.of("-Dvolmlib.noise.nativeBillow=true"));
-        probe("java-initialization-failed", true, List.of("-Dvolmlib.noise.nativeBillow=true", "-Dvolmlib.noise.nativeBillowLibrary=" + System.getProperty("volmlib.test.missingSymbolLibrary")));
-        probe("java-initialization-failed", true, List.of("-Dvolmlib.noise.nativeBillow=true", "-Dvolmlib.noise.nativeBillowLibrary=" + System.getProperty("volmlib.test.incorrectBillowLibrary")));
-        probe("java-initialization-failed", true, List.of("-Dvolmlib.noise.nativeBillow=true", "-Dvolmlib.noise.nativeBillowLibrary=" + Path.of("src/main/rust/billow.rs").toAbsolutePath()));
+        probe("java-initialization-failed", true, List.of("-Dvolmlib.noise.nativeBillow=true", "-Dvolmlib.native.library=" + System.getProperty("volmlib.test.missingSymbolLibrary")));
+        probe("java-initialization-failed", true, List.of("-Dvolmlib.noise.nativeBillow=true", "-Dvolmlib.native.library=" + System.getProperty("volmlib.test.incorrectBillowLibrary")));
+        probe("java-library-load-failed", true, List.of("-Dvolmlib.noise.nativeBillow=true", "-Dvolmlib.native.library=" + Path.of("native/noise/Cargo.toml").toAbsolutePath()));
     }
 
     private static boolean supportedHost() {
         String operatingSystem = System.getProperty("os.name").toLowerCase(Locale.ROOT);
-        return (operatingSystem.contains("mac") || operatingSystem.contains("linux"))
+        return (operatingSystem.contains("mac") || operatingSystem.contains("linux") || operatingSystem.contains("win"))
                 && List.of("aarch64", "arm64", "amd64", "x86_64").contains(System.getProperty("os.arch"));
     }
 

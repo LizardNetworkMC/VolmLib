@@ -1,69 +1,31 @@
 package art.arcane.volmlib.util.noise;
 
+import art.arcane.volmlib.util.VolmLog;
 import art.arcane.volmlib.util.math.RNG;
 import art.arcane.volmlib.util.noise.FastNoiseDouble.FractalType;
-import art.arcane.volmlib.util.VolmLog;
-import java.io.InputStream;
-import java.io.IOException;
 import art.arcane.volmlib.util.noise.FractalBillowSimplexNoise.NativeBackend;
-import java.lang.foreign.Arena;
+
 import java.lang.foreign.FunctionDescriptor;
 import java.lang.foreign.Linker;
-import java.lang.foreign.SymbolLookup;
 import java.lang.foreign.ValueLayout;
 import java.lang.invoke.MethodHandle;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.nio.file.StandardCopyOption;
-import java.util.Locale;
 
 public final class NativeBillowLoader {
-    private static final Arena LIBRARY_ARENA = Arena.ofAuto();
+    private NativeBillowLoader() {
+    }
 
     public static NativeBackend load() {
-        if (!NativeBillowLoader.class.getModule().isNativeAccessEnabled()) {
-            return new NativeBackend(null, "java-native-access-disabled");
-        }
-        String operatingSystem = System.getProperty("os.name").toLowerCase(Locale.ROOT);
-        String platform = operatingSystem.contains("mac") ? "macos" : operatingSystem.contains("linux") ? "linux" : "unsupported";
-        String architecture = switch (System.getProperty("os.arch")) {
-            case "aarch64", "arm64" -> "aarch64";
-            case "amd64", "x86_64" -> "x86_64";
-            default -> "unsupported";
-        };
-        if (platform.equals("unsupported") || architecture.equals("unsupported")) {
-            return new NativeBackend(null, "java-unsupported-platform");
+        NativeNoiseLibrary.Resolution library = NativeNoiseLibrary.shared();
+        if (!library.available()) {
+            return new NativeBackend(null, "java-" + library.status());
         }
         try {
-            String configured = System.getProperty("volmlib.noise.nativeBillowLibrary");
-            Path libraryPath;
-            if (configured != null) {
-                libraryPath = Path.of(configured);
-                if (!libraryPath.isAbsolute()) {
-                    return new NativeBackend(null, "java-library-path-not-absolute");
-                }
-                if (!Files.isRegularFile(libraryPath)) {
-                    return new NativeBackend(null, "java-library-missing");
-                }
-            } else {
-                String name = platform.equals("macos") ? "libvolmlib-billow.dylib" : "libvolmlib-billow.so";
-                String resource = "/art/arcane/volmlib/native-billow/" + platform + "-" + architecture + "/" + name;
-                try (InputStream stream = NativeBillowLoader.class.getResourceAsStream(resource)) {
-                    if (stream == null) {
-                        return new NativeBackend(null, "java-library-not-packaged");
-                    }
-                    libraryPath = Files.createTempFile("volmlib-billow-", platform.equals("macos") ? ".dylib" : ".so");
-                    libraryPath.toFile().deleteOnExit();
-                    Files.copy(stream, libraryPath, StandardCopyOption.REPLACE_EXISTING);
-                }
-            }
-            SymbolLookup library = SymbolLookup.libraryLookup(libraryPath, LIBRARY_ARENA);
             FunctionDescriptor descriptor = FunctionDescriptor.of(ValueLayout.JAVA_DOUBLE, ValueLayout.JAVA_LONG,
                     ValueLayout.JAVA_DOUBLE, ValueLayout.JAVA_DOUBLE, ValueLayout.JAVA_INT, ValueLayout.JAVA_DOUBLE);
-            MethodHandle sample = Linker.nativeLinker().downcallHandle(library.find("volmlib_billow2d_v1").orElseThrow(), descriptor);
+            MethodHandle sample = Linker.nativeLinker().downcallHandle(library.lookup().find("volmlib_billow2d_v1").orElseThrow(), descriptor);
             validate(sample);
             return new NativeBackend(sample, "native");
-        } catch (IOException | RuntimeException | LinkageError failure) {
+        } catch (RuntimeException | LinkageError failure) {
             VolmLog.warning("Noise", "Native billow initialization failed; using Java", failure);
             return new NativeBackend(null, "java-initialization-failed");
         }
