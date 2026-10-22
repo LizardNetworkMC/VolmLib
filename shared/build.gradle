@@ -204,11 +204,24 @@ tasks.named('compileBillowBatchTestJava', JavaCompile).configure {
     options.compilerArgs.add('-parameters')
 }
 
+sourceSets {
+    gpuNoiseTest {
+        compileClasspath = sourceSets.main.output + sourceSets.nativeNoise.output + sourceSets.test.output + sourceSets.test.compileClasspath
+        runtimeClasspath = output + compileClasspath + sourceSets.test.runtimeClasspath
+    }
+}
+
+tasks.named('compileGpuNoiseTestJava', JavaCompile).configure {
+    options.release.set(25)
+    options.compilerArgs.add('-parameters')
+}
+
 String nativeNoiseSystem = System.getProperty('os.name').toLowerCase(Locale.ROOT)
 String nativeNoiseOs = nativeNoiseSystem.contains('mac') ? 'macos' : nativeNoiseSystem.contains('win') ? 'windows' : 'linux'
 String nativeNoiseArch = ['aarch64', 'arm64'].contains(System.getProperty('os.arch')) ? 'aarch64' : 'x86_64'
 String nativeNoiseName = nativeNoiseOs == 'macos' ? 'libvolmlib_noise.dylib' : nativeNoiseOs == 'windows' ? 'volmlib_noise.dll' : 'libvolmlib_noise.so'
-boolean includeNativeNoise = providers.gradleProperty('includeNativeNoise').map { String enabled -> Boolean.parseBoolean(enabled) }.getOrElse(false)
+boolean includeGpuNoise = providers.gradleProperty('includeGpuNoise').map { String enabled -> Boolean.parseBoolean(enabled) }.getOrElse(false)
+boolean includeNativeNoise = includeGpuNoise || providers.gradleProperty('includeNativeNoise').map { String enabled -> Boolean.parseBoolean(enabled) }.getOrElse(false)
 File nativeNoiseCrate = file('native/noise')
 File nativeNoiseTarget = layout.buildDirectory.dir('native/noise').get().asFile
 Provider<Directory> nativeNoiseResources = layout.buildDirectory.dir('generated/nativeNoiseResources')
@@ -227,18 +240,23 @@ tasks.register('buildNativeNoiseGpu', Exec) {
     workingDir(nativeNoiseCrate)
     inputs.files(nativeNoiseSources)
     outputs.file(nativeNoiseGpuLibrary)
+    environment('CARGO_PROFILE_RELEASE_STRIP', 'none')
     commandLine('cargo', 'build', '--release', '--locked', '--features', 'gpu', '--target-dir', new File(nativeNoiseTarget, 'gpu').absolutePath)
 }
 
 tasks.register('testNativeNoise', Exec) {
     workingDir(nativeNoiseCrate)
     inputs.files(nativeNoiseSources)
-    commandLine('cargo', 'test', '--release', '--locked', '--lib', '--target-dir', new File(nativeNoiseTarget, 'test').absolutePath)
+    List<String> command = ['cargo', 'test', '--release', '--locked', '--lib', '--target-dir', new File(nativeNoiseTarget, includeGpuNoise ? 'gputest' : 'test').absolutePath]
+    if (includeGpuNoise) {
+        command.addAll(['--features', 'gpu'])
+    }
+    commandLine(command)
 }
 
 tasks.register('packageNativeNoise', Sync) {
-    dependsOn(tasks.named('buildNativeNoise'))
-    from(nativeNoiseLibrary) {
+    dependsOn(tasks.named(includeGpuNoise ? 'buildNativeNoiseGpu' : 'buildNativeNoise'))
+    from(includeGpuNoise ? nativeNoiseGpuLibrary : nativeNoiseLibrary) {
         into("art/arcane/volmlib/native/${nativeNoiseOs}-${nativeNoiseArch}")
     }
     into(nativeNoiseResources)
@@ -272,6 +290,7 @@ tasks.withType(Test).configureEach {
     classpath += sourceSets.nativeNoise.output
     doFirst { systemProperty('volmlib.test.runtimeClasspath', classpath.asPath) }
     systemProperty('volmlib.test.nativeNoise', Boolean.toString(includeNativeNoise))
+    systemProperty('volmlib.test.gpuNoise', Boolean.toString(includeGpuNoise))
 }
 
 Provider<RegularFile> incorrectBillowLibrary = layout.buildDirectory.file("nativeNoiseTest/incorrect-${nativeNoiseName}")
@@ -319,4 +338,19 @@ tasks.register('testBillowNative', Test) {
 
 tasks.named('check').configure {
     dependsOn(tasks.named('testBillowBatch'))
+}
+
+tasks.register('testGpuNoise', Test) {
+    dependsOn(tasks.named('gpuNoiseTestClasses'))
+    testClassesDirs = sourceSets.gpuNoiseTest.output.classesDirs
+    classpath = sourceSets.gpuNoiseTest.runtimeClasspath + sourceSets.nativeNoise.output
+    if (includeNativeNoise) {
+        dependsOn(tasks.named('packageNativeNoise'))
+        classpath += files(nativeNoiseResources)
+    }
+    jvmArgs('--enable-native-access=ALL-UNNAMED')
+}
+
+if (includeGpuNoise) {
+    tasks.named('check').configure { dependsOn(tasks.named('testGpuNoise')) }
 }
