@@ -5,22 +5,35 @@ import art.arcane.volmlib.util.io.CountingDataInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.DataOutputStream;
 import java.io.IOException;
-import java.util.concurrent.Semaphore;
-import java.util.concurrent.atomic.AtomicBoolean;
+import java.lang.invoke.MethodHandles;
+import java.lang.invoke.VarHandle;
 import java.util.concurrent.atomic.AtomicReferenceArray;
+import java.util.concurrent.locks.LockSupport;
 
 public abstract class MantleChunkSupport<M> extends FlaggedChunk {
+    private static final int LOCKED = Integer.MIN_VALUE;
+    private static final int SPINS_BEFORE_YIELD = 64;
+    private static final int YIELDS_BEFORE_PARK = 128;
+    private static final long MAX_PARK_NANOS = 1_000_000L;
+    private static final VarHandle USES;
+
+    static {
+        try {
+            USES = MethodHandles.lookup().findVarHandle(MantleChunkSupport.class, "uses", int.class);
+        } catch (ReflectiveOperationException e) {
+            throw new ExceptionInInitializerError(e);
+        }
+    }
+
     private final AtomicReferenceArray<M> sections;
-    private final Semaphore ref;
-    private final AtomicBoolean closed;
     private final int x;
     private final int z;
+    private volatile int uses;
+    private volatile boolean closed;
 
     protected MantleChunkSupport(int sectionHeight, int x, int z) {
         super();
         this.sections = new AtomicReferenceArray<>(sectionHeight);
-        this.ref = new Semaphore(Integer.MAX_VALUE, true);
-        this.closed = new AtomicBoolean(false);
         this.x = x;
         this.z = z;
     }
@@ -78,50 +91,66 @@ public abstract class MantleChunkSupport<M> extends FlaggedChunk {
     }
 
     public void close() {
-        closed.set(true);
-        ref.acquireUninterruptibly(Integer.MAX_VALUE);
-        ref.release(Integer.MAX_VALUE);
+        closed = true;
+        int attempt = 0;
+        while (!USES.compareAndSet(this, 0, LOCKED)) {
+            backOff(attempt++);
+        }
+        uses = 0;
     }
 
     /**
-     * Takes every use permit when nobody uses the chunk, so no use can start until {@link #unlockUses}.
+     * Locks out every use when nobody uses the chunk, so no use can start until {@link #unlockUses}.
      */
     public boolean tryLockUses() {
-        return ref.tryAcquire(Integer.MAX_VALUE);
+        return USES.compareAndSet(this, 0, LOCKED);
     }
 
     /**
-     * Returns the permits {@link #tryLockUses} took, closing the chunk first when it is sealed for a save.
+     * Lifts the lock {@link #tryLockUses} took, closing the chunk first when it is sealed for a save.
      */
     public void unlockUses(boolean seal) {
         if (seal) {
-            closed.set(true);
+            closed = true;
         }
-        ref.release(Integer.MAX_VALUE);
+        uses = 0;
     }
 
     public void reopen() {
-        if (!closed.get()) {
+        if (!closed) {
             return;
         }
-        if (ref.availablePermits() != Integer.MAX_VALUE) {
+        if (uses != 0) {
             throw new IllegalStateException("Cannot reopen a chunk while it is in use");
         }
-        closed.set(false);
+        closed = false;
     }
 
     public boolean inUse() {
-        return ref.availablePermits() < Integer.MAX_VALUE;
+        return uses != 0;
     }
 
     public MantleChunkSupport<M> use() {
-        if (closed.get()) {
+        if (closed) {
             throw new MantleClosedException("Chunk is closed!");
         }
 
-        ref.acquireUninterruptibly();
-        if (closed.get()) {
-            ref.release();
+        int attempt = 0;
+        int current = uses;
+        while (true) {
+            if (current >= 0) {
+                int witness = (int) USES.compareAndExchange(this, current, current + 1);
+                if (witness == current) {
+                    break;
+                }
+                current = witness;
+                continue;
+            }
+            backOff(attempt++);
+            current = uses;
+        }
+        if (closed) {
+            release();
             throw new MantleClosedException("Chunk is closed!");
         }
 
@@ -129,7 +158,7 @@ public abstract class MantleChunkSupport<M> extends FlaggedChunk {
     }
 
     public void release() {
-        ref.release();
+        USES.getAndAdd(this, -1);
     }
 
     public void copyFrom(MantleChunkSupport<M> chunk) {
@@ -226,7 +255,7 @@ public abstract class MantleChunkSupport<M> extends FlaggedChunk {
 
     @Override
     public boolean isClosed() {
-        return closed.get();
+        return closed;
     }
 
     protected void trimIndex(int index) {
@@ -267,8 +296,18 @@ public abstract class MantleChunkSupport<M> extends FlaggedChunk {
     protected abstract boolean isSectionEmpty(M section);
 
     private void requireOpen() {
-        if (closed.get()) {
+        if (closed) {
             throw new MantleClosedException("Chunk is closed!");
+        }
+    }
+
+    private static void backOff(int attempt) {
+        if (attempt < SPINS_BEFORE_YIELD) {
+            Thread.onSpinWait();
+        } else if (attempt < SPINS_BEFORE_YIELD + YIELDS_BEFORE_PARK) {
+            Thread.yield();
+        } else {
+            LockSupport.parkNanos(Math.min(MAX_PARK_NANOS, 1_000L << Math.min(20, attempt - SPINS_BEFORE_YIELD - YIELDS_BEFORE_PARK)));
         }
     }
 }

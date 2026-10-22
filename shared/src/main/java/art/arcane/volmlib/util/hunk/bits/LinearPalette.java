@@ -45,10 +45,11 @@ public class LinearPalette<T> implements Palette<T> {
 
     @Override
     public int add(T t) {
-        int index = size.getAndIncrement();
+        int index = size.get();
         if (palette.length() <= index)
             grow(index);
         palette.set(index, t);
+        size.set(index + 1);
         return index;
     }
 
