@@ -321,49 +321,6 @@ public class DataContainer<T> {
         }
     }
 
-    public void fillFromBits(long[] bits, T value) {
-        int words = (length + Long.SIZE - 1) >>> 6;
-        if (bits.length != words) {
-            throw new IllegalArgumentException("Bit set holds " + bits.length + " words for " + length + " positions");
-        }
-        int tail = length & (Long.SIZE - 1);
-        if (tail != 0 && (bits[words - 1] >>> tail) != 0L) {
-            throw new IllegalArgumentException("Bit set marks positions beyond " + length);
-        }
-        if (isEmpty(bits)) {
-            return;
-        }
-        write.lock();
-        version++;
-        try {
-            if (value == null) {
-                clearBits(bits);
-                return;
-            }
-            if (data.getSize() != length && hasUnalignedBits(bits)) {
-                data = expandedData(data, palette.bits(), length);
-            }
-            int id = palette.id(value);
-            if (id < 0) {
-                id = palette.add(value);
-            }
-            updateBits();
-            DataBits localData = data;
-            boolean compact = localData.getSize() != length;
-            for (int word = 0; word < words; word++) {
-                long remaining = bits[word];
-                while (remaining != 0L) {
-                    int position = (word << 6) | Long.numberOfTrailingZeros(remaining);
-                    remaining &= remaining - 1L;
-                    localData.set(compact ? compactPosition(position) : position, id);
-                }
-            }
-        } finally {
-            version++;
-            write.unlock();
-        }
-    }
-
     private boolean trySetOptimistic(int position, T t) {
         int stamp = version;
         if ((stamp & 1) != 0) {
@@ -380,46 +337,6 @@ public class DataContainer<T> {
         }
         localData.set(compact ? compactPosition(position) : position, id);
         return version == stamp;
-    }
-
-    private void clearBits(long[] bits) {
-        DataBits localData = data;
-        boolean compact = localData.getSize() != length;
-        for (int word = 0; word < bits.length; word++) {
-            long remaining = bits[word];
-            while (remaining != 0L) {
-                int position = (word << 6) | Long.numberOfTrailingZeros(remaining);
-                remaining &= remaining - 1L;
-                if (!compact) {
-                    localData.set(position, 0);
-                } else if ((position & 0x333) == 0) {
-                    localData.set(compactPosition(position), 0);
-                }
-            }
-        }
-    }
-
-    private static boolean isEmpty(long[] bits) {
-        for (long word : bits) {
-            if (word != 0L) {
-                return false;
-            }
-        }
-        return true;
-    }
-
-    private static boolean hasUnalignedBits(long[] bits) {
-        for (int word = 0; word < bits.length; word++) {
-            long remaining = bits[word];
-            while (remaining != 0L) {
-                int position = (word << 6) | Long.numberOfTrailingZeros(remaining);
-                if ((position & 0x333) != 0) {
-                    return true;
-                }
-                remaining &= remaining - 1L;
-            }
-        }
-        return false;
     }
 
     @SuppressWarnings("NonAtomicOperationOnVolatileField")
