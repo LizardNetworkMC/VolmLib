@@ -45,4 +45,8 @@ public class CubicNoise implements NoiseGenerator {
     public double noise(double x, double y, double z) {
         return f(n.GetCubic(x, y, z));
     }
+
+    public FastNoiseDouble getFastNoise() {
+        return n;
+    }
 }

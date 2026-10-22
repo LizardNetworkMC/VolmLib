@@ -18,7 +18,7 @@ import net.minecraft.world.level.levelgen.XoroshiroRandomSource;
 import org.bukkit.World;
 import art.arcane.volmlib.nativelib.minecraft26_2.terrain.NativeStructureGenerationException;
 import art.arcane.volmlib.nativelib.terrain.BukkitTerrainBuffer;
-import art.arcane.volmlib.nativelib.terrain.NativeBlockVolume;
+import art.arcane.volmlib.nativelib.terrain.NativeSectionVolume;
 import art.arcane.volmlib.nativelib.terrain.NativeTerrainAccess;
 import java.util.logging.Level;
 import java.util.logging.Logger;
@@ -87,7 +87,7 @@ public class NativeTerrainAccessImpl extends NativeBiomeAccessImpl implements Na
     }
 
     @Override
-    public boolean applyChunkDataBlocks(ChunkData chunkData, NativeBlockVolume data) {
+    public boolean applyChunkDataBlocks(ChunkData chunkData, NativeSectionVolume data) {
         if (!(chunkData instanceof CraftChunkData craftChunkData)) {
             return false;
         }

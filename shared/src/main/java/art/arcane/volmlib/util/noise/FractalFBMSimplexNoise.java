@@ -67,4 +67,8 @@ public class FractalFBMSimplexNoise implements NoiseGenerator, OctaveNoise {
     public void setOctaves(int o) {
         n.setFractalOctaves(o);
     }
+
+    public FastNoiseDouble getFastNoise() {
+        return n;
+    }
 }

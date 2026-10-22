@@ -43,6 +43,7 @@ public class DataContainer<T> {
 
     private volatile Palette<T> palette;
     private volatile DataBits data;
+    private volatile int version;
     private final int length;
     private final Writable<T> writer;
 
@@ -221,6 +222,7 @@ public class DataContainer<T> {
 
     public void writeDos(DataOutputStream dos) throws IOException {
         write.lock();
+        version++;
         try {
             trim();
             Varint.writeUnsignedVarInt(length, dos);
@@ -229,6 +231,7 @@ public class DataContainer<T> {
             writeData(dos);
             dos.flush();
         } finally {
+            version++;
             write.unlock();
         }
     }
@@ -296,25 +299,12 @@ public class DataContainer<T> {
 
     public void set(int position, T t) {
         Validate.inclusiveBetween(0L, (length - 1L), position);
-        read.lock();
-        try {
-            boolean compact = data.getSize() != length;
-            if (compact && (position & 0x333) != 0) {
-                if (t == null) {
-                    return;
-                }
-            } else {
-                int id = palette.id(t);
-                if (id >= 0) {
-                    data.set(compact ? compactPosition(position) : position, id);
-                    return;
-                }
-            }
-        } finally {
-            read.unlock();
+        if (trySetOptimistic(position, t)) {
+            return;
         }
 
         write.lock();
+        version++;
         try {
             if (data.getSize() != length && (position & 0x333) != 0) {
                 data = expandedData(data, palette.bits(), length);
@@ -326,8 +316,27 @@ public class DataContainer<T> {
             updateBits();
             data.set(data.getSize() != length ? compactPosition(position) : position, id);
         } finally {
+            version++;
             write.unlock();
         }
+    }
+
+    private boolean trySetOptimistic(int position, T t) {
+        int stamp = version;
+        if ((stamp & 1) != 0) {
+            return false;
+        }
+        DataBits localData = data;
+        boolean compact = localData.getSize() != length;
+        if (compact && (position & 0x333) != 0) {
+            return t == null && version == stamp;
+        }
+        int id = palette.id(t);
+        if (id < 0 || version != stamp) {
+            return false;
+        }
+        localData.set(compact ? compactPosition(position) : position, id);
+        return version == stamp;
     }
 
     @SuppressWarnings("NonAtomicOperationOnVolatileField")
@@ -410,6 +419,15 @@ public class DataContainer<T> {
 
     public T get(int position) {
         Validate.inclusiveBetween(0L, (length - 1L), position);
+        int stamp = version;
+        if ((stamp & 1) == 0) {
+            DataBits localData = data;
+            Palette<T> localPalette = palette;
+            int id = logicalId(localData, position);
+            if (version == stamp) {
+                return id <= 0 ? null : localPalette.get(id);
+            }
+        }
         read.lock();
         try {
             DataBits localData = data;

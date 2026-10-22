@@ -462,7 +462,7 @@ public class DataContainerMemoryTest {
     }
 
     @Test(timeout = 10_000L)
-    public void serializationCannotRenumberPaletteDuringMaterialLookup() throws Exception {
+    public void materialLookupSurvivesPaletteRenumberingBySerialization() throws Exception {
         for (boolean keepThird : new boolean[]{false, true}) {
             DataContainer<Integer> container = new DataContainer<>(INTEGERS, 8);
             container.set(0, 100);
@@ -493,7 +493,7 @@ public class DataContainerMemoryTest {
                     }
                 });
                 assertTrue(writerStarted.await(2L, TimeUnit.SECONDS));
-                assertFalse(writerFinished.await(100L, TimeUnit.MILLISECONDS));
+                assertTrue(writerFinished.await(2L, TimeUnit.SECONDS));
                 paused.proceed.countDown();
                 assertEquals(Integer.valueOf(200), readResult.get(2L, TimeUnit.SECONDS));
                 DataContainer<Integer> loaded = new DataContainer<>(

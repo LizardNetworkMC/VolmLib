@@ -1246,7 +1246,7 @@ public class CNG {
             return (getCachedNoise(x, z) * 2D) - 1D;
         }
 
-        if (hasIdentitySignedFastPath()) {
+        if (isIdentitySignedFastPath()) {
             return getSignedNoise(x, z, caches);
         }
 
@@ -1320,7 +1320,7 @@ public class CNG {
     }
 
     private double computeNoiseFastSigned3D(double x, double y, double z, SignedCaches caches) {
-        return hasIdentitySignedFastPath() ? getSignedNoise(x, y, z, caches) : (noiseFast3D(x, y, z) * 2D) - 1D;
+        return isIdentitySignedFastPath() ? getSignedNoise(x, y, z, caches) : (noiseFast3D(x, y, z) * 2D) - 1D;
     }
 
     public CNG pow(double power) {
@@ -1359,14 +1359,29 @@ public class CNG {
                 && (children == null || children.isEmpty());
     }
 
-    private boolean isIdentityPostFastPath() {
+    public boolean isIdentityPostFastPath() {
         ensureFastPathState();
         return identityPostFastPath;
     }
 
-    private boolean hasIdentitySignedFastPath() {
+    public boolean isIdentitySignedFastPath() {
         ensureFastPathState();
         return identitySignedFastPath;
+    }
+
+    public boolean isUnityOpacity() {
+        ensureFastPathState();
+        return unityOpacity;
+    }
+
+    public double getEffectiveScale() {
+        ensureFastPathState();
+        return effectiveScale;
+    }
+
+    public double getSignedFractureScale() {
+        ensureFastPathState();
+        return signedFractureScale;
     }
 
     private void zoom(double factor, IdentityHashMap<CNG, Boolean> visited) {

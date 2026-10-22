@@ -16,6 +16,6 @@ BUILDS/
 .worktrees/
 .qa/
 
-shared/native/billow/target/
+shared/native/noise/target/
 
 .kotlin/

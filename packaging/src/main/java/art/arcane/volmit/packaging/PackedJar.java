@@ -67,6 +67,7 @@ public abstract class PackedJar extends DefaultTask {
     static final String TEMPLATE_PACKAGE = "art/arcane/volmit/packaging/runtime/";
     static final String PAYLOAD = "META-INF/volmit/runtime.jar.xz";
     static final String METADATA = "META-INF/volmit/runtime.properties";
+    static final String PAYLOAD_ONLY_RESOURCES = "art/arcane/volmlib/native/";
     private static final long MAXIMUM_RUNTIME_BYTES = 256L * 1024 * 1024;
     private static final String PAPER_LOADER_METHOD = "(Lio/papermc/paper/plugin/loader/PluginClasspathBuilder;)V";
 
@@ -210,6 +211,9 @@ public abstract class PackedJar extends DefaultTask {
         for (Map.Entry<String, byte[]> entry : contents.entrySet()) {
             if (!options.natives().artifacts().isEmpty()
                     && entry.getKey().startsWith(options.natives().resourceDirectory())) {
+                continue;
+            }
+            if (entry.getKey().startsWith(PAYLOAD_ONLY_RESOURCES)) {
                 continue;
             }
             if (!entry.getKey().endsWith(".class") || retained.contains(entry.getKey())) {

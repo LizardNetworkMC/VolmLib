@@ -77,4 +77,8 @@ public class VascularNoise implements NoiseGenerator {
     public double noiseSigned(double x, double y, double z) {
         return filterSigned(n.GetCellular(x, y, z));
     }
+
+    public FastNoiseDouble getFastNoise() {
+        return n;
+    }
 }

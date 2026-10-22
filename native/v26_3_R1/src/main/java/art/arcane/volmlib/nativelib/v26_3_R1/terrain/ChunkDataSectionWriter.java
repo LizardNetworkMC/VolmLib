@@ -1,7 +1,7 @@
 package art.arcane.volmlib.nativelib.v26_3_R1.terrain;
 
 import art.arcane.volmlib.nativelib.terrain.NativeBlockState;
-import art.arcane.volmlib.nativelib.terrain.NativeBlockVolume;
+import art.arcane.volmlib.nativelib.terrain.NativeSectionVolume;
 import ca.spottedleaf.moonrise.common.list.ShortList;
 import ca.spottedleaf.moonrise.patches.collisions.CollisionUtil;
 import io.netty.buffer.Unpooled;
@@ -20,6 +20,8 @@ import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.chunk.ChunkAccess;
 import net.minecraft.world.level.chunk.LevelChunkSection;
 import net.minecraft.world.level.chunk.PalettedContainer;
+import net.minecraft.world.level.chunk.PalettedContainerRO;
+import net.minecraft.world.level.chunk.Strategy;
 import net.minecraft.world.level.material.FluidState;
 import org.bukkit.block.data.BlockData;
 import org.bukkit.craftbukkit.block.data.CraftBlockData;
@@ -27,13 +29,17 @@ import org.bukkit.craftbukkit.block.data.CraftBlockData;
 import java.lang.invoke.MethodHandles;
 import java.lang.invoke.VarHandle;
 import java.util.Arrays;
+import java.util.List;
+import java.util.Optional;
+import java.util.stream.LongStream;
 
 /**
- * Copies a stored block volume into chunk sections. A section that still holds only plain air is rebuilt in one
- * pass: palette and packed storage are encoded in the network section layout and loaded with
- * {@link PalettedContainer#read}; its block counts are then written from the cell ids already in hand, with the
- * ticking positions in the order {@link LevelChunkSection#recalcBlockCounts} lists them (falling back to that
- * recount when the section's count fields cannot be reached). Any other section takes the per-block path. Block
+ * Copies a section volume into chunk sections. A section that still holds only plain air is rebuilt in one pass: the
+ * chunk palette ids are mapped to a section palette in the per-block visiting order (z, y, x), packed into the
+ * container's bit storage and installed as the container's data directly (through the network section layout when the
+ * container carries anti-xray preset values); its block counts are then written from the cell ids already in hand,
+ * with the ticking positions in the order {@link LevelChunkSection#recalcBlockCounts} lists them (falling back to
+ * that recount when the section's count fields cannot be reached). Any other section takes the per-block path. Block
  * entity changes are replayed afterwards in the per-block visiting order (z, y, x).
  */
 final class ChunkDataSectionWriter {
@@ -41,93 +47,102 @@ final class ChunkDataSectionWriter {
     private static final int MAX_LOCAL_PALETTE = 256;
     private static final int UNWRITTEN = -1;
     private static final BlockState AIR = Blocks.AIR.defaultBlockState();
+    private static final Strategy<BlockState> BLOCK_STATES = Strategy.createForBlockStates(Block.BLOCK_STATE_REGISTRY);
     private static final SectionCounts SECTION_COUNTS = SectionCounts.resolve();
+    private static final VarHandle PRESET_VALUES = resolvePresetValues();
+    private static final ThreadLocal<Scratch> SCRATCH = ThreadLocal.withInitial(Scratch::new);
 
     private final ChunkAccess access;
-    private final NativeBlockVolume data;
+    private final NativeSectionVolume data;
     private final int minY;
     private final int baseX;
     private final int baseZ;
-    private final int[] ids = new int[SECTION_CELLS];
-    private final BlockState[] palette = new BlockState[SECTION_CELLS + 1];
-    private final Reference2IntOpenHashMap<BlockState> paletteIds = new Reference2IntOpenHashMap<>();
-    private final LongArrayList blockEntityCells = new LongArrayList();
-    private final int[] cellCounts = new int[MAX_LOCAL_PALETTE + 1];
-    private final int[] appearance = new int[MAX_LOCAL_PALETTE + 1];
-    private int paletteSize;
-    private FriendlyByteBuf buffer;
 
-    ChunkDataSectionWriter(ChunkAccess access, NativeBlockVolume data, int minY) {
+    ChunkDataSectionWriter(ChunkAccess access, NativeSectionVolume data, int minY) {
         this.access = access;
         this.data = data;
         this.minY = minY;
         this.baseX = access.getPos().getMinBlockX();
         this.baseZ = access.getPos().getMinBlockZ();
-        this.paletteIds.defaultReturnValue(UNWRITTEN);
     }
 
     boolean write(int yStart, int yEnd) {
-        int top = Math.min(yEnd - 1, highestStoredY());
-        if (top < yStart) {
-            return true;
+        int accessMinY = access.getMinY();
+        if (((minY - accessMinY) & 15) != 0) {
+            return false;
         }
 
-        int accessMinY = access.getMinY();
-        int firstSection = (yStart + minY - accessMinY) >> 4;
-        int lastSection = (top + minY - accessMinY) >> 4;
-        for (int sectionIndex = firstSection; sectionIndex <= lastSection; sectionIndex++) {
+        Scratch scratch = Scratch.borrow();
+        try {
+            return write(scratch, accessMinY, yStart, yEnd);
+        } finally {
+            scratch.release();
+        }
+    }
+
+    private boolean write(Scratch scratch, int accessMinY, int yStart, int yEnd) {
+        scratch.beginChunk(data.palette());
+        int sectionOffset = (minY - accessMinY) >> 4;
+        int sectionCount = data.sectionCount();
+        for (int bufferSection = 0; bufferSection < sectionCount; bufferSection++) {
+            short[] cells = data.section(bufferSection);
+            if (cells == null) {
+                continue;
+            }
+            int bufferBaseY = bufferSection << 4;
+            int fromRow = Math.max(0, yStart - bufferBaseY);
+            int toRow = Math.min(16, yEnd - bufferBaseY);
+            if (fromRow >= toRow) {
+                continue;
+            }
+            int sectionIndex = bufferSection + sectionOffset;
             int sectionBlockY = accessMinY + (sectionIndex << 4);
-            int from = Math.max(yStart, sectionBlockY - minY);
-            int to = Math.min(top + 1, sectionBlockY + 16 - minY);
-            if (!writeSection(access.getSection(sectionIndex), sectionBlockY, from, to)) {
+            if (!writeSection(scratch, access.getSection(sectionIndex), cells, sectionBlockY, fromRow, toRow)) {
                 return false;
             }
         }
 
-        applyBlockEntities();
+        applyBlockEntities(scratch);
         return true;
     }
 
-    private int highestStoredY() {
-        int top = -1;
-        for (int z = 0; z < 16; z++) {
-            for (int x = 0; x < 16; x++) {
-                top = Math.max(top, data.highestStoredY(x, z));
-            }
-        }
-        return top;
-    }
-
-    private boolean writeSection(LevelChunkSection section, int sectionBlockY, int from, int to) {
-        paletteIds.clear();
-        paletteSize = 0;
-        int firstRow = from + minY - sectionBlockY;
-        int endRow = to + minY - sectionBlockY;
-        Arrays.fill(ids, 0, firstRow << 8, UNWRITTEN);
-        Arrays.fill(ids, endRow << 8, SECTION_CELLS, UNWRITTEN);
+    private boolean writeSection(Scratch scratch, LevelChunkSection section, short[] cells, int sectionBlockY,
+                                 int fromRow, int toRow) {
+        scratch.beginSection();
+        int[] ids = scratch.ids;
+        int[] localIds = scratch.localByChunk;
+        int[] cellCounts = scratch.cellCounts;
+        Arrays.fill(ids, 0, fromRow << 8, UNWRITTEN);
+        Arrays.fill(ids, toRow << 8, SECTION_CELLS, UNWRITTEN);
         boolean written = false;
-        boolean unwritten = firstRow > 0 || endRow < 16;
-        NativeBlockState lastPlatformState = null;
+        int unwrittenCount = (fromRow + 16 - toRow) << 8;
+        int lastChunkId = 0;
         int lastId = UNWRITTEN;
         for (int z = 0; z < 16; z++) {
-            for (int y = from; y < to; y++) {
-                int rowIndex = ((y + minY - sectionBlockY) << 8) | (z << 4);
+            for (int row = fromRow; row < toRow; row++) {
+                int rowIndex = (row << 8) | (z << 4);
                 for (int x = 0; x < 16; x++) {
-                    NativeBlockState platformState = data.getStoredRaw(x, y, z);
-                    if (platformState == null) {
+                    int chunkId = cells[rowIndex | x] & 0xFFFF;
+                    if (chunkId == 0) {
                         ids[rowIndex | x] = UNWRITTEN;
-                        unwritten = true;
+                        unwrittenCount++;
                         continue;
                     }
-                    if (platformState != lastPlatformState) {
-                        BlockState state = resolve(platformState);
-                        if (state == null) {
-                            return false;
+                    if (chunkId != lastChunkId) {
+                        int id = localIds[chunkId];
+                        if (id == UNWRITTEN) {
+                            BlockState state = scratch.resolve(chunkId);
+                            if (state == null) {
+                                return false;
+                            }
+                            id = scratch.paletteId(state);
+                            localIds[chunkId] = id;
                         }
-                        lastId = paletteId(state);
-                        lastPlatformState = platformState;
+                        lastId = id;
+                        lastChunkId = chunkId;
                     }
                     ids[rowIndex | x] = lastId;
+                    cellCounts[lastId]++;
                     written = true;
                 }
             }
@@ -137,18 +152,22 @@ final class ChunkDataSectionWriter {
             return true;
         }
 
-        int airId = unwritten ? paletteId(AIR) : UNWRITTEN;
-        if (paletteSize > MAX_LOCAL_PALETTE || section.getStates().maybeHas(state -> state != AIR)) {
-            writeCells(section, sectionBlockY);
+        int airId = UNWRITTEN;
+        if (unwrittenCount > 0) {
+            airId = scratch.paletteId(AIR);
+            cellCounts[airId] += unwrittenCount;
+        }
+        if (scratch.paletteSize > MAX_LOCAL_PALETTE || section.getStates().maybeHas(state -> state != AIR)) {
+            writeCells(scratch, section, sectionBlockY);
             return true;
         }
 
-        if (paletteSize == 1 && palette[0] == AIR) {
+        if (scratch.paletteSize == 1 && scratch.palette[0] == AIR) {
             return true;
         }
 
-        loadSection(section, airId);
-        recordBlockEntities(sectionBlockY);
+        loadSection(scratch, section, airId);
+        recordBlockEntities(scratch, sectionBlockY);
         return true;
     }
 
@@ -157,49 +176,58 @@ final class ChunkDataSectionWriter {
         return blockData instanceof CraftBlockData craftBlockData ? craftBlockData.getState() : null;
     }
 
-    private int paletteId(BlockState state) {
-        int id = paletteIds.getInt(state);
-        if (id == UNWRITTEN) {
-            id = paletteSize++;
-            paletteIds.put(state, id);
-            palette[id] = state;
-        }
-        return id;
-    }
-
-    private void loadSection(LevelChunkSection section, int airId) {
-        if (buffer == null) {
-            buffer = new FriendlyByteBuf(Unpooled.buffer(8 + 5 * (MAX_LOCAL_PALETTE + 1) + SECTION_CELLS));
-        }
-        buffer.clear();
-        int bits = 0;
-        if (paletteSize == 1) {
-            buffer.writeByte(0);
-            buffer.writeVarInt(Block.BLOCK_STATE_REGISTRY.getId(palette[0]));
+    private static void loadSection(Scratch scratch, LevelChunkSection section, int airId) {
+        int paletteSize = scratch.paletteSize;
+        int bits = paletteSize == 1 ? 0 : Math.max(4, 32 - Integer.numberOfLeadingZeros(paletteSize - 1));
+        long[] packed = bits == 0 ? null : pack(scratch.ids, bits, airId);
+        PalettedContainer<BlockState> states = section.getStates();
+        if (PRESET_VALUES == null || (Object[]) PRESET_VALUES.get(states) != null) {
+            readNetworkLayout(scratch, states, bits, packed);
         } else {
-            bits = Math.max(4, 32 - Integer.numberOfLeadingZeros(paletteSize - 1));
-            buffer.writeByte(bits);
-            buffer.writeVarInt(paletteSize);
-            for (int id = 0; id < paletteSize; id++) {
-                buffer.writeVarInt(Block.BLOCK_STATE_REGISTRY.getId(palette[id]));
-            }
-            int valuesPerLong = 64 / bits;
-            for (int start = 0; start < SECTION_CELLS; start += valuesPerLong) {
-                int end = Math.min(SECTION_CELLS, start + valuesPerLong);
-                long packed = 0L;
-                for (int index = start; index < end; index++) {
-                    int id = ids[index];
-                    packed |= (long) (id == UNWRITTEN ? airId : id) << ((index - start) * bits);
-                }
-                buffer.writeLong(packed);
-            }
+            List<BlockState> entries = Arrays.asList(Arrays.copyOf(scratch.palette, paletteSize));
+            Optional<LongStream> storage = packed == null ? Optional.empty() : Optional.of(LongStream.of(packed));
+            states.data = PalettedContainer.unpack(BLOCK_STATES, new PalettedContainerRO.PackedData<>(entries, storage), AIR, null)
+                    .getOrThrow().data;
         }
-        section.getStates().read(buffer);
         if (SECTION_COUNTS == null) {
             section.recalcBlockCounts();
         } else {
-            writeBlockCounts(section, airId, bits);
+            writeBlockCounts(scratch, section, airId, bits);
         }
+    }
+
+    private static long[] pack(int[] ids, int bits, int airId) {
+        int valuesPerLong = 64 / bits;
+        long[] packed = new long[(SECTION_CELLS + valuesPerLong - 1) / valuesPerLong];
+        int slot = 0;
+        for (int start = 0; start < SECTION_CELLS; start += valuesPerLong) {
+            int end = Math.min(SECTION_CELLS, start + valuesPerLong);
+            long value = 0L;
+            for (int index = start; index < end; index++) {
+                int id = ids[index];
+                value |= (long) (id == UNWRITTEN ? airId : id) << ((index - start) * bits);
+            }
+            packed[slot++] = value;
+        }
+        return packed;
+    }
+
+    private static void readNetworkLayout(Scratch scratch, PalettedContainer<BlockState> states, int bits, long[] packed) {
+        FriendlyByteBuf buffer = scratch.buffer();
+        buffer.clear();
+        buffer.writeByte(bits);
+        if (bits == 0) {
+            buffer.writeVarInt(Block.BLOCK_STATE_REGISTRY.getId(scratch.palette[0]));
+        } else {
+            buffer.writeVarInt(scratch.paletteSize);
+            for (int id = 0; id < scratch.paletteSize; id++) {
+                buffer.writeVarInt(Block.BLOCK_STATE_REGISTRY.getId(scratch.palette[id]));
+            }
+            for (long value : packed) {
+                buffer.writeLong(value);
+            }
+        }
+        states.read(buffer);
     }
 
     /**
@@ -208,15 +236,10 @@ final class ChunkDataSectionWriter {
      * lists each id's positions in index order; only the ticking list depends on that order, so the map is rebuilt
      * the same way only when more than one ticking id has to be ordered.
      */
-    private void writeBlockCounts(LevelChunkSection section, int airId, int bits) {
-        Arrays.fill(cellCounts, 0, paletteSize, 0);
-        int distinct = 0;
-        for (int index = 0; index < SECTION_CELLS; index++) {
-            int id = ids[index] == UNWRITTEN ? airId : ids[index];
-            if (cellCounts[id]++ == 0) {
-                appearance[distinct++] = id;
-            }
-        }
+    private static void writeBlockCounts(Scratch scratch, LevelChunkSection section, int airId, int bits) {
+        int paletteSize = scratch.paletteSize;
+        int[] ids = scratch.ids;
+        int[] cellCounts = scratch.cellCounts;
 
         int nonEmpty = 0;
         int fluids = 0;
@@ -227,7 +250,7 @@ final class ChunkDataSectionWriter {
         int tickingId = UNWRITTEN;
         for (int id = 0; id < paletteSize; id++) {
             int count = cellCounts[id];
-            BlockState state = palette[id];
+            BlockState state = scratch.palette[id];
             if (count == 0 || state.isAir()) {
                 continue;
             }
@@ -258,23 +281,34 @@ final class ChunkDataSectionWriter {
         }
         tickingBlocks.setMinCapacity(ticking);
         if (tickingIds == 1) {
-            addPositions(tickingBlocks, tickingId);
+            addPositions(ids, tickingBlocks, tickingId);
             return;
+        }
+        int[] appearance = scratch.appearance;
+        boolean[] appeared = scratch.appeared;
+        Arrays.fill(appeared, 0, paletteSize, false);
+        int distinct = 0;
+        for (int index = 0; index < SECTION_CELLS && distinct < paletteSize; index++) {
+            int id = ids[index] == UNWRITTEN ? airId : ids[index];
+            if (!appeared[id]) {
+                appeared[id] = true;
+                appearance[distinct++] = id;
+            }
         }
         Int2ObjectOpenHashMap<BlockState> recountOrder = new Int2ObjectOpenHashMap<>(bits <= 6 ? 1 << bits : 64);
         for (int index = 0; index < distinct; index++) {
-            recountOrder.put(appearance[index], palette[appearance[index]]);
+            recountOrder.put(appearance[index], scratch.palette[appearance[index]]);
         }
         ObjectIterator<Int2ObjectMap.Entry<BlockState>> entries = recountOrder.int2ObjectEntrySet().fastIterator();
         while (entries.hasNext()) {
             Int2ObjectMap.Entry<BlockState> entry = entries.next();
             if (!entry.getValue().isAir() && entry.getValue().isRandomlyTicking()) {
-                addPositions(tickingBlocks, entry.getIntKey());
+                addPositions(ids, tickingBlocks, entry.getIntKey());
             }
         }
     }
 
-    private void addPositions(ShortList list, int id) {
+    private static void addPositions(int[] ids, ShortList list, int id) {
         for (int index = 0; index < SECTION_CELLS; index++) {
             if (ids[index] == id) {
                 list.add((short) index);
@@ -282,10 +316,11 @@ final class ChunkDataSectionWriter {
         }
     }
 
-    private void recordBlockEntities(int sectionBlockY) {
+    private void recordBlockEntities(Scratch scratch, int sectionBlockY) {
+        int paletteSize = scratch.paletteSize;
         boolean[] blockEntityIds = null;
         for (int id = 0; id < paletteSize; id++) {
-            if (palette[id].hasBlockEntity()) {
+            if (scratch.palette[id].hasBlockEntity()) {
                 if (blockEntityIds == null) {
                     blockEntityIds = new boolean[paletteSize];
                 }
@@ -295,21 +330,23 @@ final class ChunkDataSectionWriter {
         if (blockEntityIds == null) {
             return;
         }
+        int[] ids = scratch.ids;
         for (int index = 0; index < SECTION_CELLS; index++) {
             int id = ids[index];
             if (id != UNWRITTEN && blockEntityIds[id]) {
-                recordBlockEntity(index & 15, sectionBlockY + (index >> 8), (index >> 4) & 15, false);
+                recordBlockEntity(scratch, index & 15, sectionBlockY + (index >> 8), (index >> 4) & 15, false);
             }
         }
     }
 
-    private void writeCells(LevelChunkSection section, int sectionBlockY) {
+    private void writeCells(Scratch scratch, LevelChunkSection section, int sectionBlockY) {
+        int[] ids = scratch.ids;
         for (int index = 0; index < SECTION_CELLS; index++) {
             int id = ids[index];
             if (id == UNWRITTEN) {
                 continue;
             }
-            BlockState state = palette[id];
+            BlockState state = scratch.palette[id];
             int x = index & 15;
             int y = index >> 8;
             int z = (index >> 4) & 15;
@@ -318,24 +355,24 @@ final class ChunkDataSectionWriter {
             }
             BlockState oldState = section.setBlockState(x, y, z, state, false);
             if (state.hasBlockEntity()) {
-                recordBlockEntity(x, sectionBlockY + y, z, false);
+                recordBlockEntity(scratch, x, sectionBlockY + y, z, false);
             } else if (oldState != null && oldState.hasBlockEntity()) {
-                recordBlockEntity(x, sectionBlockY + y, z, true);
+                recordBlockEntity(scratch, x, sectionBlockY + y, z, true);
             }
         }
     }
 
-    private void recordBlockEntity(int x, int blockY, int z, boolean remove) {
+    private void recordBlockEntity(Scratch scratch, int x, int blockY, int z, boolean remove) {
         long order = ((long) z << 40) | ((long) (blockY - access.getMinY()) << 8) | ((long) x << 1) | (remove ? 1L : 0L);
-        blockEntityCells.add(order);
+        scratch.blockEntityCells.add(order);
     }
 
-    private void applyBlockEntities() {
-        if (blockEntityCells.isEmpty()) {
+    private void applyBlockEntities(Scratch scratch) {
+        if (scratch.blockEntityCells.isEmpty()) {
             return;
         }
 
-        long[] cells = blockEntityCells.toLongArray();
+        long[] cells = scratch.blockEntityCells.toLongArray();
         Arrays.sort(cells);
         int accessMinY = access.getMinY();
         for (long cell : cells) {
@@ -354,6 +391,99 @@ final class ChunkDataSectionWriter {
             } else {
                 access.setBlockEntity(entity);
             }
+        }
+    }
+
+    private static VarHandle resolvePresetValues() {
+        try {
+            return MethodHandles.privateLookupIn(PalettedContainer.class, MethodHandles.lookup())
+                    .findVarHandle(PalettedContainer.class, "presetValues", Object[].class);
+        } catch (ReflectiveOperationException | RuntimeException | LinkageError e) {
+            return null;
+        }
+    }
+
+    private static final class Scratch {
+        private final int[] ids = new int[SECTION_CELLS];
+        private final BlockState[] palette = new BlockState[SECTION_CELLS + 1];
+        private final Reference2IntOpenHashMap<BlockState> paletteIds = new Reference2IntOpenHashMap<>();
+        private final LongArrayList blockEntityCells = new LongArrayList();
+        private final int[] cellCounts = new int[SECTION_CELLS + 1];
+        private final int[] appearance = new int[MAX_LOCAL_PALETTE + 1];
+        private final boolean[] appeared = new boolean[MAX_LOCAL_PALETTE + 1];
+        private static final NativeBlockState[] NO_STATES = new NativeBlockState[0];
+
+        private NativeBlockState[] chunkPalette = NO_STATES;
+        private BlockState[] resolved = new BlockState[64];
+        private int[] localByChunk = new int[64];
+        private int chunkPaletteSize;
+        private int paletteSize;
+        private FriendlyByteBuf buffer;
+        private boolean borrowed;
+
+        private Scratch() {
+            paletteIds.defaultReturnValue(UNWRITTEN);
+        }
+
+        private static Scratch borrow() {
+            Scratch scratch = SCRATCH.get();
+            if (scratch.borrowed) {
+                scratch = new Scratch();
+            }
+            scratch.borrowed = true;
+            return scratch;
+        }
+
+        private void release() {
+            chunkPalette = NO_STATES;
+            blockEntityCells.clear();
+            borrowed = false;
+        }
+
+        private void beginChunk(NativeBlockState[] palette) {
+            chunkPalette = palette;
+            chunkPaletteSize = palette.length;
+            if (resolved.length < chunkPaletteSize) {
+                int capacity = Integer.highestOneBit(chunkPaletteSize - 1) << 1;
+                resolved = new BlockState[capacity];
+                localByChunk = new int[capacity];
+            } else {
+                Arrays.fill(resolved, 0, chunkPaletteSize, null);
+            }
+            blockEntityCells.clear();
+        }
+
+        private void beginSection() {
+            paletteIds.clear();
+            paletteSize = 0;
+            Arrays.fill(localByChunk, 0, chunkPaletteSize, UNWRITTEN);
+        }
+
+        private BlockState resolve(int chunkId) {
+            BlockState state = resolved[chunkId];
+            if (state == null) {
+                state = ChunkDataSectionWriter.resolve(chunkPalette[chunkId]);
+                resolved[chunkId] = state;
+            }
+            return state;
+        }
+
+        private int paletteId(BlockState state) {
+            int id = paletteIds.getInt(state);
+            if (id == UNWRITTEN) {
+                id = paletteSize++;
+                paletteIds.put(state, id);
+                palette[id] = state;
+                cellCounts[id] = 0;
+            }
+            return id;
+        }
+
+        private FriendlyByteBuf buffer() {
+            if (buffer == null) {
+                buffer = new FriendlyByteBuf(Unpooled.buffer(8 + 5 * (MAX_LOCAL_PALETTE + 1) + SECTION_CELLS));
+            }
+            return buffer;
         }
     }
 

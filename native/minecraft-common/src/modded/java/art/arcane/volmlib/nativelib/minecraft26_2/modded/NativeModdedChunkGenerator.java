@@ -12,6 +12,7 @@ import art.arcane.volmlib.nativelib.minecraft26_2.modded.ModdedHeightmaps;
 import art.arcane.volmlib.nativelib.minecraft26_2.terrain.NativeTransitionColumn;
 import art.arcane.volmlib.nativelib.minecraft26_2.terrain.NativeTerrainHeightCache;
 import art.arcane.volmlib.nativelib.minecraft26_2.terrain.NativeGenerationWriteGuard;
+import art.arcane.volmlib.nativelib.minecraft26_2.terrain.NativeSectionStateWriter;
 import art.arcane.volmlib.nativelib.minecraft26_2.terrain.NativeStructureStartInjector;
 import art.arcane.volmlib.nativelib.minecraft26_2.terrain.NativeStructureReferenceRepair;
 import art.arcane.volmlib.nativelib.minecraft26_2.terrain.NativeStructureVanillaLocator;
@@ -475,35 +476,80 @@ public final class NativeModdedChunkGenerator<C, P extends StructureStartPlan, O
         int to = Math.min(dimMinY + height, chunkMaxY);
         int baseX = chunk.getPos().getMinBlockX();
         int baseZ = chunk.getPos().getMinBlockZ();
-
-        for (int y = from; y < to; ) {
-            int sectionIndex = chunk.getSectionIndex(y);
-            LevelChunkSection section = chunk.getSection(sectionIndex);
-            int sectionMinY = chunk.getSectionYFromSectionIndex(sectionIndex) << 4;
-            int sectionEnd = Math.min(sectionMinY + 16, to);
-            section.acquire();
-            try {
-                for (int blockY = y; blockY < sectionEnd; blockY++) {
-                    int bufferY = blockY - dimMinY;
-                    int localY = blockY & 15;
-                    for (int z = 0; z < 16; z++) {
-                        for (int x = 0; x < 16; x++) {
-                            NativeBlockState state = blocks.rawOrNull(x, bufferY, z);
-                            if (state == null) {
-                                continue;
-                            }
-                            BlockState blockState = (BlockState) state.nativeHandle();
-                            section.setBlockState(x, localY, z, blockState, false);
-                            if (blockState.hasBlockEntity()) {
-                                createDefaultBlockEntity(chunk, new BlockPos(baseX + x, blockY, baseZ + z), blockState);
-                            }
+        NativeSectionStateWriter writer = NativeSectionStateWriter.borrow();
+        try {
+            BlockState[] cells = writer.cells();
+            for (int y = from; y < to; ) {
+                int sectionIndex = chunk.getSectionIndex(y);
+                LevelChunkSection section = chunk.getSection(sectionIndex);
+                int sectionMinY = chunk.getSectionYFromSectionIndex(sectionIndex) << 4;
+                int sectionEnd = Math.min(sectionMinY + 16, to);
+                if (collectSection(blocks, cells, dimMinY, sectionMinY, y, sectionEnd)) {
+                    section.acquire();
+                    try {
+                        if (writer.writeFresh(section)) {
+                            createBlockEntities(chunk, cells, baseX, sectionMinY, baseZ);
+                        } else {
+                            writeCells(chunk, section, cells, baseX, sectionMinY, baseZ);
                         }
+                    } finally {
+                        section.release();
                     }
                 }
-            } finally {
-                section.release();
+                y = sectionEnd;
             }
-            y = sectionEnd;
+        } finally {
+            writer.release();
+        }
+    }
+
+    private static boolean collectSection(NativeModdedGeneratorPolicy.BlockBuffer blocks, BlockState[] cells, int dimMinY,
+                                          int sectionMinY, int fromY, int toY) {
+        Arrays.fill(cells, 0, (fromY - sectionMinY) << 8, null);
+        Arrays.fill(cells, (toY - sectionMinY) << 8, cells.length, null);
+        boolean written = false;
+        for (int blockY = fromY; blockY < toY; blockY++) {
+            int bufferY = blockY - dimMinY;
+            int row = (blockY - sectionMinY) << 8;
+            for (int z = 0; z < 16; z++) {
+                for (int x = 0; x < 16; x++) {
+                    NativeBlockState state = blocks.rawOrNull(x, bufferY, z);
+                    if (state == null) {
+                        cells[row | (z << 4) | x] = null;
+                        continue;
+                    }
+                    cells[row | (z << 4) | x] = (BlockState) state.nativeHandle();
+                    written = true;
+                }
+            }
+        }
+        return written;
+    }
+
+    private static void writeCells(ChunkAccess chunk, LevelChunkSection section, BlockState[] cells, int baseX,
+                                   int sectionMinY, int baseZ) {
+        for (int index = 0; index < cells.length; index++) {
+            BlockState blockState = cells[index];
+            if (blockState == null) {
+                continue;
+            }
+            int x = index & 15;
+            int z = (index >> 4) & 15;
+            int localY = index >> 8;
+            section.setBlockState(x, localY, z, blockState, false);
+            if (blockState.hasBlockEntity()) {
+                createDefaultBlockEntity(chunk, new BlockPos(baseX + x, sectionMinY + localY, baseZ + z), blockState);
+            }
+        }
+    }
+
+    private static void createBlockEntities(ChunkAccess chunk, BlockState[] cells, int baseX, int sectionMinY, int baseZ) {
+        for (int index = 0; index < cells.length; index++) {
+            BlockState blockState = cells[index];
+            if (blockState != null && blockState.hasBlockEntity()) {
+                createDefaultBlockEntity(chunk, new BlockPos(baseX + (index & 15), sectionMinY + (index >> 8),
+                        baseZ + ((index >> 4) & 15)), blockState);
+            }
         }
     }
 

@@ -44,4 +44,8 @@ public class CellularNoise implements NoiseGenerator {
     public double noise(double x, double y, double z) {
         return (n.GetCellular(x, y, z) / 2D) + 0.5D;
     }
+
+    public FastNoiseDouble getFastNoise() {
+        return n;
+    }
 }

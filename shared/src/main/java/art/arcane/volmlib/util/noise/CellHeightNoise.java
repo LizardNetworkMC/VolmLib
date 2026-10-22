@@ -49,4 +49,8 @@ public class CellHeightNoise implements NoiseGenerator {
     public double noise(double x, double y, double z) {
         return filter(n.GetCellular(x, y, z));
     }
+
+    public FastNoiseDouble getFastNoise() {
+        return n;
+    }
 }

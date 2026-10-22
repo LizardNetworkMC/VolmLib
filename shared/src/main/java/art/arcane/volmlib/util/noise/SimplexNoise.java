@@ -106,4 +106,15 @@ public class SimplexNoise implements NoiseGenerator, OctaveNoise {
         octaveBounding = 1D / (2D - Math.scalb(1D, 1 - this.octaves));
     }
 
+    public FastNoiseDouble getFastNoise() {
+        return n;
+    }
+
+    public int getOctaves() {
+        return octaves;
+    }
+
+    public double getOctaveBounding() {
+        return octaveBounding;
+    }
 }

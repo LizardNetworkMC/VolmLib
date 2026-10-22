@@ -4,6 +4,12 @@ import org.gradle.api.attributes.java.TargetJvmVersion
 import org.gradle.api.tasks.compile.JavaCompile
 import org.gradle.jvm.toolchain.JavaLanguageVersion
 
+import java.nio.charset.StandardCharsets
+import java.nio.file.Files
+import java.nio.file.StandardCopyOption
+import java.security.MessageDigest
+import java.util.HexFormat
+
 plugins {
     id 'java-library'
     id 'maven-publish'
@@ -182,111 +188,21 @@ publishing {
 }
 
 sourceSets {
-    nativeBillow {
+    nativeNoise {
         compileClasspath = sourceSets.main.output + sourceSets.main.compileClasspath
-    }
-}
-
-tasks.named('compileNativeBillowJava', JavaCompile).configure {
-    options.release.set(25)
-    options.compilerArgs.add('-parameters')
-}
-
-String nativeBillowOs = System.getProperty('os.name').toLowerCase(Locale.ROOT).contains('mac') ? 'macos' : 'linux'
-String nativeBillowArch = ['aarch64', 'arm64'].contains(System.getProperty('os.arch')) ? 'aarch64' : 'x86_64'
-String nativeBillowName = nativeBillowOs == 'macos' ? 'libvolmlib-billow.dylib' : 'libvolmlib-billow.so'
-Provider<Directory> nativeBillowResources = layout.buildDirectory.dir('generated/nativeBillowResources')
-Provider<RegularFile> nativeBillowLibrary = nativeBillowResources.map { Directory directory ->
-    directory.file("art/arcane/volmlib/native-billow/${nativeBillowOs}-${nativeBillowArch}/${nativeBillowName}")
-}
-
-Provider<String> nativeBillowCompilerDetails = providers.exec { commandLine('rustc', '-vV') }.standardOutput.asText
-String nativeBillowTarget = nativeBillowArch + (nativeBillowOs == 'macos' ? '-apple-darwin' : '-unknown-linux-gnu')
-List<String> nativeBillowCompilerFlags = ['--edition=2024', '--crate-type=cdylib', '-C', 'opt-level=3', '-C', 'panic=abort']
-if (nativeBillowOs == 'macos') {
-    nativeBillowCompilerFlags.addAll(['-C', 'link-arg=-Wl,-install_name,@rpath/libvolmlib-billow.dylib'])
-}
-
-tasks.register('buildNativeBillow', Exec) {
-    inputs.file('src/main/rust/billow.rs')
-    inputs.property('rustCompilerVersion', nativeBillowCompilerDetails.map { String version -> version.trim() })
-    inputs.property('targetPlatform', nativeBillowOs + '-' + nativeBillowArch)
-    inputs.property('compilerFlags', nativeBillowCompilerFlags)
-    outputs.file(nativeBillowLibrary)
-    doFirst {
-        if (!['Mac OS X', 'Linux'].contains(System.getProperty('os.name')) ||
-                !['aarch64', 'arm64', 'amd64', 'x86_64'].contains(System.getProperty('os.arch'))) {
-            throw new GradleException('Native Billow builds support macOS/Linux aarch64/x86_64 hosts')
-        }
-        if (!nativeBillowCompilerDetails.get().readLines().contains('host: ' + nativeBillowTarget)) {
-            throw new GradleException('rustc host must match native Billow resource target ' + nativeBillowTarget)
-        }
-        nativeBillowLibrary.get().asFile.parentFile.mkdirs()
-    }
-    commandLine(['rustc'] + nativeBillowCompilerFlags +
-            ['src/main/rust/billow.rs', '-o', nativeBillowLibrary.get().asFile.absolutePath])
-}
-
-tasks.named('jar').configure {
-    from(sourceSets.nativeBillow.output)
-}
-
-tasks.named('sourcesJar').configure {
-    from(sourceSets.nativeBillow.allSource)
-    exclude('art/arcane/volmlib/native-billow/**')
-    from('src/main/rust') { into('rust') }
-}
-
-if (providers.gradleProperty('includeNativeBillow').map { String enabled -> Boolean.parseBoolean(enabled) }.getOrElse(false)) {
-    sourceSets.main.resources.srcDir(nativeBillowResources)
-    tasks.named('processResources').configure { dependsOn(tasks.named('buildNativeBillow')) }
-    tasks.named('sourcesJar').configure { dependsOn(tasks.named('buildNativeBillow')) }
-} else {
-    tasks.named('jar').configure { exclude('art/arcane/volmlib/native-billow/**') }
-}
-
-tasks.withType(Test).configureEach {
-    classpath += sourceSets.nativeBillow.output
-}
-
-tasks.withType(Test).configureEach {
-    doFirst { systemProperty('volmlib.test.runtimeClasspath', classpath.asPath) }
-    systemProperty('volmlib.test.nativeBillow', providers.gradleProperty('includeNativeBillow').orElse('false').get())
-}
-
-Provider<RegularFile> incorrectBillowLibrary = layout.buildDirectory.file("nativeBillowTest/${nativeBillowName}")
-tasks.register('buildIncorrectBillowTestLibrary', Exec) {
-    inputs.file('src/test/rust/incorrect-billow.rs')
-    outputs.file(incorrectBillowLibrary)
-    doFirst { incorrectBillowLibrary.get().asFile.parentFile.mkdirs() }
-    commandLine('rustc', '--edition=2024', '--crate-type=cdylib', 'src/test/rust/incorrect-billow.rs', '-o', incorrectBillowLibrary.get().asFile.absolutePath)
-}
-if (providers.gradleProperty('includeNativeBillow').map { String enabled -> Boolean.parseBoolean(enabled) }.getOrElse(false)) {
-    tasks.withType(Test).configureEach {
-        dependsOn(tasks.named('buildIncorrectBillowTestLibrary'))
-        systemProperty('volmlib.test.incorrectBillowLibrary', incorrectBillowLibrary.get().asFile.absolutePath)
-    }
-}
-
-Provider<RegularFile> missingSymbolLibrary = layout.buildDirectory.file("nativeBillowTest/missing-${nativeBillowName}")
-tasks.register('buildMissingSymbolTestLibrary', Exec) {
-    inputs.file('src/test/rust/missing-symbol.rs')
-    outputs.file(missingSymbolLibrary)
-    doFirst { missingSymbolLibrary.get().asFile.parentFile.mkdirs() }
-    commandLine('rustc', '--edition=2024', '--crate-type=cdylib', 'src/test/rust/missing-symbol.rs', '-o', missingSymbolLibrary.get().asFile.absolutePath)
-}
-if (providers.gradleProperty('includeNativeBillow').map { String enabled -> Boolean.parseBoolean(enabled) }.getOrElse(false)) {
-    tasks.withType(Test).configureEach {
-        dependsOn(tasks.named('buildMissingSymbolTestLibrary'))
-        systemProperty('volmlib.test.missingSymbolLibrary', missingSymbolLibrary.get().asFile.absolutePath)
     }
 }
 
 sourceSets {
     billowBatchTest {
-        compileClasspath = sourceSets.main.output + sourceSets.nativeBillow.output + sourceSets.test.compileClasspath
+        compileClasspath = sourceSets.main.output + sourceSets.nativeNoise.output + sourceSets.test.compileClasspath
         runtimeClasspath = output + compileClasspath + sourceSets.test.runtimeClasspath
     }
+}
+
+tasks.named('compileNativeNoiseJava', JavaCompile).configure {
+    options.release.set(25)
+    options.compilerArgs.add('-parameters')
 }
 
 tasks.named('compileBillowBatchTestJava', JavaCompile).configure {
@@ -294,18 +210,205 @@ tasks.named('compileBillowBatchTestJava', JavaCompile).configure {
     options.compilerArgs.add('-parameters')
 }
 
-tasks.named('sourcesJar').configure {
-    from('native/billow') {
-        include('Cargo.toml', 'Cargo.lock', 'build.rs', 'src/**')
-        into('rust/batch')
+sourceSets {
+    gpuNoiseTest {
+        compileClasspath = sourceSets.main.output + sourceSets.nativeNoise.output + sourceSets.test.output + sourceSets.test.compileClasspath
+        runtimeClasspath = output + compileClasspath + sourceSets.test.runtimeClasspath
     }
 }
 
-tasks.register('buildBillowNative', Exec) {
-    workingDir(file('native/billow'))
-    commandLine('cargo', 'build', '--release', '--locked')
-    inputs.files(fileTree('native/billow/src'), file('native/billow/Cargo.toml'), file('native/billow/Cargo.lock'), file('native/billow/build.rs'))
-    outputs.dir(file('native/billow/target/release'))
+tasks.named('compileGpuNoiseTestJava', JavaCompile).configure {
+    options.release.set(25)
+    options.compilerArgs.add('-parameters')
+}
+
+String nativeNoiseSystem = System.getProperty('os.name').toLowerCase(Locale.ROOT)
+String nativeNoiseOs = nativeNoiseSystem.contains('mac') ? 'macos' : nativeNoiseSystem.contains('win') ? 'windows' : 'linux'
+String nativeNoiseArch = ['aarch64', 'arm64'].contains(System.getProperty('os.arch')) ? 'aarch64' : 'x86_64'
+String nativeNoisePlatform = "${nativeNoiseOs}-${nativeNoiseArch}"
+Map<String, String> nativeNoiseLibraryNames = [macos: 'libvolmlib_noise.dylib', linux: 'libvolmlib_noise.so', windows: 'volmlib_noise.dll']
+String nativeNoiseName = nativeNoiseLibraryNames[nativeNoiseOs]
+Map<String, String> nativeNoiseTargets = [
+    'macos-aarch64' : 'aarch64-apple-darwin',
+    'macos-x86_64'  : 'x86_64-apple-darwin',
+    'linux-aarch64' : 'aarch64-unknown-linux-gnu',
+    'linux-x86_64'  : 'x86_64-unknown-linux-gnu',
+    'windows-x86_64': 'x86_64-pc-windows-gnu'
+]
+Map<String, String> nativeNoiseZigTargets = [
+    'linux-aarch64': 'aarch64-unknown-linux-gnu.2.17',
+    'linux-x86_64' : 'x86_64-unknown-linux-gnu.2.17'
+]
+boolean includeGpuNoise = providers.gradleProperty('includeGpuNoise').map { String enabled -> Boolean.parseBoolean(enabled) }.getOrElse(false)
+boolean buildNativeNoise = includeGpuNoise || providers.gradleProperty('buildNativeNoise').map { String enabled -> Boolean.parseBoolean(enabled) }.getOrElse(false)
+File nativeNoiseCrate = file('native/noise')
+File nativeNoisePrebuilt = file('native/noise/prebuilt')
+File nativeNoiseStamp = new File(nativeNoisePrebuilt, 'sources.sha256')
+File nativeNoiseTarget = layout.buildDirectory.dir('native/noise').get().asFile
+Provider<Directory> nativeNoiseResources = layout.buildDirectory.dir('generated/nativeNoiseResources')
+File nativeNoiseLibrary = new File(nativeNoiseTarget, "cpu/release/${nativeNoiseName}")
+File nativeNoiseGpuLibrary = new File(nativeNoiseTarget, "gpu/release/${nativeNoiseName}")
+FileCollection nativeNoiseSources = files(fileTree('native/noise/src'), 'native/noise/Cargo.toml', 'native/noise/Cargo.lock')
+File nativeNoiseWindowsLinker = file('native/noise/zigcc-windows.sh')
+FileCollection nativeNoiseCpuSources = files(fileTree('native/noise/src') { exclude('gpu*.rs', '*.wgsl') }, 'native/noise/Cargo.toml', 'native/noise/Cargo.lock', nativeNoiseWindowsLinker)
+
+String nativeNoiseDigest(FileCollection sources, File crate) {
+    MessageDigest digest = MessageDigest.getInstance('SHA-256')
+    List<File> ordered = sources.files.sort { File file -> crate.toPath().relativize(file.toPath()).toString().replace('\\', '/') }
+    for (File source : ordered) {
+        digest.update(crate.toPath().relativize(source.toPath()).toString().replace('\\', '/').getBytes(StandardCharsets.UTF_8))
+        digest.update((byte) 0)
+        digest.update(source.getText('UTF-8').replace('\r\n', '\n').getBytes(StandardCharsets.UTF_8))
+        digest.update((byte) 0)
+    }
+    return HexFormat.of().formatHex(digest.digest())
+}
+
+tasks.register('buildNativeNoise', Exec) {
+    workingDir(nativeNoiseCrate)
+    inputs.files(nativeNoiseSources)
+    outputs.file(nativeNoiseLibrary)
+    commandLine('cargo', 'build', '--release', '--locked', '--target-dir', new File(nativeNoiseTarget, 'cpu').absolutePath)
+}
+
+tasks.register('buildNativeNoiseGpu', Exec) {
+    workingDir(nativeNoiseCrate)
+    inputs.files(nativeNoiseSources)
+    outputs.file(nativeNoiseGpuLibrary)
+    environment('CARGO_PROFILE_RELEASE_STRIP', 'none')
+    commandLine('cargo', 'build', '--release', '--locked', '--features', 'gpu', '--target-dir', new File(nativeNoiseTarget, 'gpu').absolutePath)
+}
+
+List<TaskProvider<Exec>> nativeNoisePlatformBuilds = nativeNoiseTargets.collect { String platform, String target ->
+    String zigTarget = nativeNoiseZigTargets[platform]
+    String taskSuffix = platform.split('-').collect { String part -> part.capitalize() }.join('')
+    tasks.register("buildNativeNoise${taskSuffix}", Exec) {
+        group = 'build'
+        description = "Builds the ${platform} native noise library for native/noise/prebuilt."
+        workingDir(nativeNoiseCrate)
+        inputs.files(nativeNoiseCpuSources)
+        outputs.file(new File(nativeNoiseTarget, "prebuilt/${target}/release/${nativeNoiseLibraryNames[platform.split('-')[0]]}"))
+        if (platform == 'windows-x86_64') {
+            environment('CARGO_TARGET_X86_64_PC_WINDOWS_GNU_LINKER', nativeNoiseWindowsLinker.absolutePath)
+        }
+        List<String> command = zigTarget == null ? ['cargo', 'build'] : ['cargo', 'zigbuild']
+        command.addAll(['--release', '--locked', '--target', zigTarget ?: target, '--target-dir', new File(nativeNoiseTarget, 'prebuilt').absolutePath])
+        commandLine(command)
+    }
+}
+
+tasks.register('buildNativeNoisePrebuilt') {
+    group = 'build'
+    description = 'Rebuilds every packaged native noise library into native/noise/prebuilt (macOS host with cargo-zigbuild and zig on PATH).'
+    dependsOn(nativeNoisePlatformBuilds)
+    doLast {
+        nativeNoiseTargets.each { String platform, String target ->
+            String library = nativeNoiseLibraryNames[platform.split('-')[0]]
+            File built = new File(nativeNoiseTarget, "prebuilt/${target}/release/${library}")
+            File packaged = new File(nativeNoisePrebuilt, "${platform}/${library}")
+            packaged.parentFile.mkdirs()
+            Files.copy(built.toPath(), packaged.toPath(), StandardCopyOption.REPLACE_EXISTING)
+        }
+        nativeNoiseStamp.text = nativeNoiseDigest(nativeNoiseCpuSources, nativeNoiseCrate) + '\n'
+    }
+}
+
+tasks.register('verifyNativeNoisePrebuilt') {
+    group = 'verification'
+    description = 'Fails when native/noise/prebuilt does not match the current native noise crate sources.'
+    inputs.files(nativeNoiseCpuSources).withPathSensitivity(PathSensitivity.RELATIVE)
+    inputs.dir(nativeNoisePrebuilt).withPathSensitivity(PathSensitivity.RELATIVE)
+    doLast {
+        List<String> missing = nativeNoiseTargets.keySet().findAll { String platform ->
+            !new File(nativeNoisePrebuilt, "${platform}/${nativeNoiseLibraryNames[platform.split('-')[0]]}").isFile()
+        }.toList()
+        if (!missing.isEmpty()) {
+            throw new GradleException("native/noise/prebuilt is missing ${missing.join(', ')}; run ./gradlew :shared:buildNativeNoisePrebuilt")
+        }
+        String recorded = nativeNoiseStamp.isFile() ? nativeNoiseStamp.getText('UTF-8').trim() : ''
+        if (recorded != nativeNoiseDigest(nativeNoiseCpuSources, nativeNoiseCrate)) {
+            throw new GradleException('native/noise/prebuilt was built from different crate sources; run ./gradlew :shared:buildNativeNoisePrebuilt')
+        }
+    }
+}
+
+tasks.named('check').configure { dependsOn(tasks.named('verifyNativeNoisePrebuilt')) }
+
+tasks.register('testNativeNoise', Exec) {
+    workingDir(nativeNoiseCrate)
+    inputs.files(nativeNoiseSources)
+    List<String> command = ['cargo', 'test', '--release', '--locked', '--lib', '--target-dir', new File(nativeNoiseTarget, includeGpuNoise ? 'gputest' : 'test').absolutePath]
+    if (includeGpuNoise) {
+        command.addAll(['--features', 'gpu'])
+    }
+    commandLine(command)
+}
+
+tasks.register('packageNativeNoise', Sync) {
+    from(nativeNoisePrebuilt) {
+        include('*/*')
+        if (buildNativeNoise) {
+            exclude("${nativeNoisePlatform}/**")
+        }
+        into('art/arcane/volmlib/native')
+    }
+    if (buildNativeNoise) {
+        dependsOn(tasks.named(includeGpuNoise ? 'buildNativeNoiseGpu' : 'buildNativeNoise'))
+        from(includeGpuNoise ? nativeNoiseGpuLibrary : nativeNoiseLibrary) {
+            into("art/arcane/volmlib/native/${nativeNoisePlatform}")
+        }
+    }
+    into(nativeNoiseResources)
+}
+
+tasks.named('jar').configure {
+    dependsOn(tasks.named('packageNativeNoise'))
+    from(sourceSets.nativeNoise.output)
+    from(nativeNoiseResources)
+}
+
+tasks.named('sourcesJar').configure {
+    from(sourceSets.nativeNoise.allSource)
+    from('native/noise') {
+        include('Cargo.toml', 'Cargo.lock', 'src/**')
+        into('rust/noise')
+    }
+}
+
+if (buildNativeNoise) {
+    tasks.named('check').configure { dependsOn(tasks.named('testNativeNoise')) }
+}
+
+tasks.withType(Test).configureEach {
+    dependsOn(tasks.named('packageNativeNoise'))
+    classpath += sourceSets.nativeNoise.output + files(nativeNoiseResources)
+    doFirst { systemProperty('volmlib.test.runtimeClasspath', classpath.asPath) }
+    systemProperty('volmlib.test.nativeNoise', Boolean.toString(nativeNoiseTargets.containsKey(nativeNoisePlatform)))
+    systemProperty('volmlib.test.gpuNoise', Boolean.toString(includeGpuNoise))
+}
+
+Provider<RegularFile> incorrectBillowLibrary = layout.buildDirectory.file("nativeNoiseTest/incorrect-${nativeNoiseName}")
+tasks.register('buildIncorrectBillowTestLibrary', Exec) {
+    inputs.file('src/test/rust/incorrect-billow.rs')
+    outputs.file(incorrectBillowLibrary)
+    doFirst { incorrectBillowLibrary.get().asFile.parentFile.mkdirs() }
+    commandLine('rustc', '--edition=2024', '--crate-type=cdylib', 'src/test/rust/incorrect-billow.rs', '-o', incorrectBillowLibrary.get().asFile.absolutePath)
+}
+
+Provider<RegularFile> missingSymbolLibrary = layout.buildDirectory.file("nativeNoiseTest/missing-${nativeNoiseName}")
+tasks.register('buildMissingSymbolTestLibrary', Exec) {
+    inputs.file('src/test/rust/missing-symbol.rs')
+    outputs.file(missingSymbolLibrary)
+    doFirst { missingSymbolLibrary.get().asFile.parentFile.mkdirs() }
+    commandLine('rustc', '--edition=2024', '--crate-type=cdylib', 'src/test/rust/missing-symbol.rs', '-o', missingSymbolLibrary.get().asFile.absolutePath)
+}
+
+if (buildNativeNoise) {
+    tasks.withType(Test).configureEach {
+        dependsOn(tasks.named('buildIncorrectBillowTestLibrary'), tasks.named('buildMissingSymbolTestLibrary'))
+        systemProperty('volmlib.test.incorrectBillowLibrary', incorrectBillowLibrary.get().asFile.absolutePath)
+        systemProperty('volmlib.test.missingSymbolLibrary', missingSymbolLibrary.get().asFile.absolutePath)
+    }
 }
 
 tasks.register('testBillowBatch', Test) {
@@ -316,25 +419,28 @@ tasks.register('testBillowBatch', Test) {
 }
 
 tasks.register('testBillowNative', Test) {
-    dependsOn(tasks.named('buildBillowNative'), tasks.named('billowBatchTestClasses'))
+    dependsOn(tasks.named('buildNativeNoise'), tasks.named('buildNativeNoiseGpu'), tasks.named('billowBatchTestClasses'))
     testClassesDirs = sourceSets.billowBatchTest.output.classesDirs
     classpath = sourceSets.billowBatchTest.runtimeClasspath
-    String systemName = System.getProperty('os.name').toLowerCase(Locale.ROOT)
-    String libraryName = systemName.contains('mac') ? 'libvolmlib_billow.dylib' : systemName.contains('win') ? 'volmlib_billow.dll' : 'libvolmlib_billow.so'
-    File batchLibrary = file("native/billow/target/release/${libraryName}")
-    inputs.file(batchLibrary).withPropertyName('billowBatchLibrary')
-    systemProperty('volmlib.billow.library', batchLibrary.absolutePath)
-    if (['Mac OS X', 'Linux'].contains(System.getProperty('os.name'))
-            && ['aarch64', 'arm64', 'amd64', 'x86_64'].contains(System.getProperty('os.arch'))) {
-        dependsOn(tasks.named('buildNativeBillow'))
-        inputs.file(nativeBillowLibrary).withPropertyName('scalarBillowLibrary')
-        systemProperty('volmlib.noise.nativeBillow', 'true')
-        systemProperty('volmlib.noise.nativeBillowLibrary', nativeBillowLibrary.get().asFile.absolutePath)
-        systemProperty('volmlib.test.scalarBillowCoexistence', 'true')
-    }
+    inputs.file(nativeNoiseGpuLibrary).withPropertyName('billowBatchLibrary')
+    inputs.file(nativeNoiseLibrary).withPropertyName('scalarBillowLibrary')
+    systemProperty('volmlib.billow.library', nativeNoiseGpuLibrary.absolutePath)
+    systemProperty('volmlib.native.library', nativeNoiseLibrary.absolutePath)
+    systemProperty('volmlib.test.scalarBillowCoexistence', 'true')
     jvmArgs('--enable-native-access=ALL-UNNAMED')
 }
 
 tasks.named('check').configure {
     dependsOn(tasks.named('testBillowBatch'))
+}
+
+tasks.register('testGpuNoise', Test) {
+    dependsOn(tasks.named('gpuNoiseTestClasses'))
+    testClassesDirs = sourceSets.gpuNoiseTest.output.classesDirs
+    classpath = sourceSets.gpuNoiseTest.runtimeClasspath + sourceSets.nativeNoise.output
+    jvmArgs('--enable-native-access=ALL-UNNAMED')
+}
+
+if (includeGpuNoise) {
+    tasks.named('check').configure { dependsOn(tasks.named('testGpuNoise')) }
 }
