@@ -101,6 +101,7 @@ public class NoiseProgramParityTest {
         assertThrows(IllegalStateException.class, () -> volume.sample2D(0D, 0D));
         assertThrows(IllegalStateException.class, () -> volume.fill2D(volume.newScratch(), new double[1], new double[1], 1, new double[1]));
         assertThrows(IllegalStateException.class, () -> planar.fillColumn3D(planar.newScratch(), 0D, 0D, 0D, 1D, 1, new double[1]));
+        assertThrows(IllegalStateException.class, () -> planar.fillPoints3D(planar.newScratch(), new double[1], new double[1], new double[1], 1, new double[1]));
     }
 
     @Test
@@ -170,5 +171,6 @@ public class NoiseProgramParityTest {
         planar.fillGrid2D(scratch, 100D, -200D, 1D, 16, 16, out);
         volume.fillColumn3D(scratch, 12D, 34D, -64D, 2D, 192, out);
         volume.fillLattice3D(scratch, 0D, -64D, 0D, 2D, 2D, 2D, 16, 64, 16, out);
+        volume.fillPoints3D(scratch, xs, zs, xs, xs.length, out);
     }
 }

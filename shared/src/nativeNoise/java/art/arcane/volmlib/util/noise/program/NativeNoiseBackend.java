@@ -19,6 +19,7 @@ final class NativeNoiseBackend implements NoiseBackend {
     private final MethodHandle grid2D;
     private final MethodHandle column3D;
     private final MethodHandle lattice3D;
+    private final MethodHandle points3D;
     private final AtomicBoolean failureReported = new AtomicBoolean();
 
     NativeNoiseBackend(SymbolLookup library) {
@@ -40,6 +41,8 @@ final class NativeNoiseBackend implements NoiseBackend {
                 FunctionDescriptor.of(ValueLayout.JAVA_LONG, ValueLayout.ADDRESS, ValueLayout.JAVA_DOUBLE, ValueLayout.JAVA_DOUBLE,
                         ValueLayout.JAVA_DOUBLE, ValueLayout.JAVA_DOUBLE, ValueLayout.JAVA_DOUBLE, ValueLayout.JAVA_DOUBLE,
                         ValueLayout.JAVA_INT, ValueLayout.JAVA_INT, ValueLayout.JAVA_INT));
+        points3D = linker.downcallHandle(library.find("volmlib_noise_points3d").orElseThrow(),
+                FunctionDescriptor.of(ValueLayout.JAVA_LONG, ValueLayout.ADDRESS, ValueLayout.JAVA_INT));
     }
 
     @Override
@@ -146,6 +149,32 @@ final class NativeNoiseBackend implements NoiseBackend {
             reportFailure(failure);
         }
         NoiseBackends.java().fillLattice3D(program, scratch, x0, y0, z0, stepX, stepY, stepZ, nx, ny, nz, out);
+    }
+
+    @Override
+    public void fillPoints3D(NoiseProgram program, NoiseScratch scratch, double[] xs, double[] ys, double[] zs, int count, double[] out) {
+        if (!(program.backendState instanceof MemorySegment encoded) || count <= 0 || count > Integer.MAX_VALUE / 3) {
+            NoiseBackends.java().fillPoints3D(program, scratch, xs, ys, zs, count, out);
+            return;
+        }
+        try {
+            long buffer = (long) input.invokeExact(count * 3);
+            long result = 0L;
+            if (buffer != 0L) {
+                MemorySegment.copy(xs, 0, addressSpace, DOUBLE, buffer, count);
+                MemorySegment.copy(ys, 0, addressSpace, DOUBLE, buffer + count * 8L, count);
+                MemorySegment.copy(zs, 0, addressSpace, DOUBLE, buffer + count * 16L, count);
+                result = (long) points3D.invokeExact(encoded, count);
+            }
+            if (result != 0L) {
+                MemorySegment.copy(addressSpace, DOUBLE, result, out, 0, count);
+                return;
+            }
+            reportFailure(null);
+        } catch (Throwable failure) {
+            reportFailure(failure);
+        }
+        NoiseBackends.java().fillPoints3D(program, scratch, xs, ys, zs, count, out);
     }
 
     private void reportFailure(Throwable failure) {

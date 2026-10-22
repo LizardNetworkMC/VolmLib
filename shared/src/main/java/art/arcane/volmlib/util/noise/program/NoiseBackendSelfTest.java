@@ -54,6 +54,15 @@ final class NoiseBackendSelfTest {
         if (differs(expected, actual, POINTS)) {
             return "fill2D";
         }
+        double[] ys = new double[POINTS];
+        for (int index = 0; index < POINTS; index++) {
+            ys[index] = (index & 1) == 0 ? random.nextDouble(-64D, 320D) : coordinate(random);
+        }
+        java.fillPoints3D(volume, scratch, xs, ys, zs, POINTS, expected);
+        backend.fillPoints3D(volume, scratch, xs, ys, zs, POINTS, actual);
+        if (differs(expected, actual, POINTS)) {
+            return "fillPoints3D";
+        }
         for (double origin : ORIGINS) {
             double step = STEPS[random.nextInt(STEPS.length)];
             double z0 = coordinate(random);

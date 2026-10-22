@@ -213,6 +213,11 @@ public final class NoiseProgram {
         backend.fillLattice3D(this, scratch, x0, y0, z0, stepX, stepY, stepZ, nx, ny, nz, out);
     }
 
+    public void fillPoints3D(NoiseScratch scratch, double[] xs, double[] ys, double[] zs, int count, double[] out) {
+        requireVolumetric();
+        backend.fillPoints3D(this, scratch, xs, ys, zs, count, out);
+    }
+
     public NoiseBackend backend() {
         return backend;
     }

@@ -222,6 +222,7 @@ pub struct Scratch {
     pair_low: [Vec<f64>; 3],
     pair_high: [Vec<f64>; 3],
     work: Work,
+    identity: Vec<u32>,
     pub input: Vec<f64>,
     pub out: Vec<f64>,
 }
@@ -309,6 +310,40 @@ impl Scratch {
             self.evaluate_planar(program, length);
             let root: &Vec<f64> = &self.values[program.terms.len() - 1];
             self.out[start..start + length].copy_from_slice(&root[..length]);
+            start += length;
+        }
+    }
+
+    pub fn fill_points3d(&mut self, program: &Program, count: usize) {
+        grow(&mut self.out, count);
+        self.prepare_terms(program.terms.len());
+        self.work.reserve(BLOCK);
+        for axis in 0..3 {
+            grow(&mut self.coordinates[axis], BLOCK);
+        }
+        if self.identity.len() < BLOCK {
+            self.identity = (0..BLOCK as u32).collect();
+        }
+        let root: usize = program.terms.len() - 1;
+        let mut start: usize = 0;
+        while start < count {
+            let length: usize = BLOCK.min(count - start);
+            for axis in 0..3 {
+                let offset: usize = axis * count + start;
+                self.coordinates[axis][..length].copy_from_slice(&self.input[offset..offset + length]);
+            }
+            for term in 0..program.terms.len() {
+                let descriptor: &Term = &program.terms[term];
+                let first: &[f64] = &self.coordinates[descriptor.axis0 as usize];
+                let second: &[f64] = &self.coordinates[descriptor.axis1 as usize];
+                if descriptor.mode >= MODE_UNSIGNED_3D {
+                    let third: &[f64] = &self.coordinates[descriptor.axis2 as usize];
+                    evaluate_volume_term(program, &mut self.values, &mut self.work, term, first, second, third, &self.identity, length);
+                } else {
+                    evaluate_pair_term(program, &mut self.values, &mut self.work, term, first, second, length);
+                }
+            }
+            self.out[start..start + length].copy_from_slice(&self.values[root][..length]);
             start += length;
         }
     }

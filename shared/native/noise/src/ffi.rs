@@ -84,6 +84,22 @@ pub extern "C" fn volmlib_noise_fill2d(program: *const u8, points: i32) -> *cons
 }
 
 #[unsafe(no_mangle)]
+pub extern "C" fn volmlib_noise_points3d(program: *const u8, points: i32) -> *const f64 {
+    let Some(points) = count(points) else {
+        return std::ptr::null();
+    };
+    if points.checked_mul(3).is_none() {
+        return std::ptr::null();
+    }
+    with_program(program, |view, scratch| {
+        if scratch.input.len() < points * 3 {
+            scratch.input.resize(points * 3, 0.0);
+        }
+        scratch.fill_points3d(view, points);
+    })
+}
+
+#[unsafe(no_mangle)]
 pub extern "C" fn volmlib_noise_grid2d(program: *const u8, x0: f64, z0: f64, step: f64, width: i32, depth: i32) -> *const f64 {
     let (Some(width), Some(depth)) = (count(width), count(depth)) else {
         return std::ptr::null();
