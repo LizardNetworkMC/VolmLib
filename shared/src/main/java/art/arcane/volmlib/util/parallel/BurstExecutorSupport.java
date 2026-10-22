@@ -14,6 +14,7 @@ import java.util.concurrent.ForkJoinPool;
 import java.util.concurrent.ForkJoinWorkerThread;
 import java.util.concurrent.Future;
 import java.util.concurrent.RejectedExecutionException;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Consumer;
 import java.util.function.Supplier;
 
@@ -23,6 +24,7 @@ public class BurstExecutorSupport {
     private final Consumer<Throwable> errorHandler;
     @Getter
     private final KList<Future<?>> futures;
+    private final KList<ClaimedTask> claimedTasks;
     @Setter
     private boolean multicore = true;
 
@@ -46,6 +48,7 @@ public class BurstExecutorSupport {
                 ? failure -> VolmLog.severe("BurstExecutor", "Burst task failed", failure)
                 : errorHandler;
         futures = new KList<Future<?>>(burstSizeEstimate);
+        claimedTasks = new KList<ClaimedTask>(burstSizeEstimate);
     }
 
     @SuppressWarnings("UnusedReturnValue")
@@ -57,15 +60,17 @@ public class BurstExecutorSupport {
         }
 
         synchronized (futures) {
+            ClaimedTask claimed = executor instanceof ForkJoinPool ? new ClaimedTask(r) : null;
             Future<?> c;
             try {
-                c = executor.submit(r);
+                c = executor.submit(claimed == null ? r : claimed);
             } catch (RejectedExecutionException rejected) {
                 errorHandler.accept(rejected);
                 r.run();
                 return CompletableFuture.completedFuture(null);
             }
             futures.add(c);
+            claimedTasks.add(claimed);
             return c;
         }
     }
@@ -112,17 +117,24 @@ public class BurstExecutorSupport {
         }
 
         List<Future<?>> queued;
+        List<ClaimedTask> claimable;
         synchronized (futures) {
             if (futures.isEmpty()) {
                 return;
             }
             queued = new KList<>(futures);
+            claimable = new KList<>(claimedTasks);
             futures.clear();
+            claimedTasks.clear();
         }
 
+        runUnstartedTasks(queued, claimable);
         boolean interrupted = false;
         try {
             for (Future<?> future : queued) {
+                if (future == null) {
+                    continue;
+                }
                 while (true) {
                     try {
                         future.get();
@@ -136,6 +148,28 @@ public class BurstExecutorSupport {
                         errorHandler.accept(e);
                         break;
                     }
+                }
+            }
+        } finally {
+            if (interrupted) {
+                Thread.currentThread().interrupt();
+            }
+        }
+    }
+
+    private void runUnstartedTasks(List<Future<?>> queued, List<ClaimedTask> claimable) {
+        boolean interrupted = Thread.interrupted();
+        try {
+            for (int index = claimable.size() - 1; index >= 0; index--) {
+                ClaimedTask task = claimable.get(index);
+                if (task == null || !task.claim()) {
+                    continue;
+                }
+                queued.set(index, null);
+                try {
+                    task.work.run();
+                } catch (Throwable failure) {
+                    errorHandler.accept(new ExecutionException(failure));
                 }
             }
         } finally {
@@ -162,5 +196,25 @@ public class BurstExecutorSupport {
         ForkJoinWorkerThread worker = (ForkJoinWorkerThread) thread;
 
         return worker.getPool() == pool;
+    }
+
+    private static final class ClaimedTask implements Runnable {
+        private final Runnable work;
+        private final AtomicBoolean claimed = new AtomicBoolean();
+
+        private ClaimedTask(Runnable work) {
+            this.work = work;
+        }
+
+        private boolean claim() {
+            return !claimed.get() && claimed.compareAndSet(false, true);
+        }
+
+        @Override
+        public void run() {
+            if (claim()) {
+                work.run();
+            }
+        }
     }
 }
