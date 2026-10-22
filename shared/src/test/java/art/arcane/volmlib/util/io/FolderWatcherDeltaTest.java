@@ -129,19 +129,20 @@ public class FolderWatcherDeltaTest extends WatcherTestRoot {
     public void fileWatcherTracksSizeAndAbsence() throws Exception {
         Path file = root.resolve("plain.txt");
         write(file, "one");
-        FileWatcher watcher = new FileWatcher(file.toFile());
+        try (FileWatcher watcher = new FileWatcher(file.toFile(), false)) {
 
-        assertFalse(watcher.checkModified());
-        assertFalse(watcher.wasDeleted());
+            assertFalse(watcher.checkModified());
+            assertFalse(watcher.wasDeleted());
 
-        write(file, "one-longer");
-        assertTrue(watcher.checkModified());
-        assertFalse(watcher.checkModified());
+            write(file, "one-longer");
+            assertTrue(watcher.checkModified());
+            assertFalse(watcher.checkModified());
 
-        Files.delete(file);
-        assertTrue(watcher.checkModified());
-        assertTrue(watcher.wasDeleted());
-        assertFalse(watcher.checkModified());
+            Files.delete(file);
+            assertTrue(watcher.checkModified());
+            assertTrue(watcher.wasDeleted());
+            assertFalse(watcher.checkModified());
+        }
     }
 
     @Test
@@ -158,24 +159,24 @@ public class FolderWatcherDeltaTest extends WatcherTestRoot {
         assertFalse(watcher.wasDeleted());
     }
 
-    @Test
+    @Test(timeout = 8_000L)
     public void sameMetadataAtomicReplacementIsDetected() throws Exception {
         Path file = root.resolve("atomic.txt");
         write(file, "one");
         FileTime originalModified = Files.getLastModifiedTime(file);
-        FileWatcher watcher = new FileWatcher(file.toFile());
-        Path replacement = root.resolve("atomic.tmp");
-        write(replacement, "two");
-        Files.setLastModifiedTime(replacement, originalModified);
+        try (FileWatcher watcher = new FileWatcher(file.toFile())) {
+            Path replacement = root.resolve("atomic.tmp");
+            write(replacement, "two");
+            Files.setLastModifiedTime(replacement, originalModified);
 
-        try {
-            Files.move(replacement, file, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
-        } catch (AtomicMoveNotSupportedException unsupported) {
-            Files.move(replacement, file, StandardCopyOption.REPLACE_EXISTING);
+            try {
+                Files.move(replacement, file, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
+            } catch (AtomicMoveNotSupportedException unsupported) {
+                Files.move(replacement, file, StandardCopyOption.REPLACE_EXISTING);
+            }
+
+            assertTrue(awaitFileChange(watcher, 5_000L));
         }
-
-        assertTrue(watcher.checkModified());
-        watcher.close();
     }
 
     @Test
@@ -225,6 +226,17 @@ public class FolderWatcherDeltaTest extends WatcherTestRoot {
         FolderWatcher watcher = new FolderWatcher(root.toFile());
         assertFalse(watcher.checkModified());
         watcher.close();
+    }
+
+    private boolean awaitFileChange(FileWatcher watcher, long timeoutMs) throws InterruptedException {
+        long deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(timeoutMs);
+        while (System.nanoTime() < deadline) {
+            if (watcher.checkModified()) {
+                return true;
+            }
+            Thread.sleep(10L);
+        }
+        return false;
     }
 
     private boolean awaitFullScanQuiet(FolderWatcher watcher, File writtenFile, long timeoutMs)

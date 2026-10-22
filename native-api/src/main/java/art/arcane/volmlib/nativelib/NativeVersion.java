@@ -7,6 +7,7 @@ import java.util.regex.Pattern;
 
 public enum NativeVersion {
     V1_21_R7("v1_21_R7", List.of("1.21.11")),
+    V26_1_R1("v26_1_R1", List.of("26.1", "26.1.1")),
     V26_2_R1("v26_2_R1", List.of("26.1.2", "26.2")),
     V26_3_R1("v26_3_R1", List.of("26.3"));
 

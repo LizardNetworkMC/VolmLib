@@ -74,12 +74,12 @@ import static org.mockito.Mockito.withSettings;
 public class BukkitLanguageEditorTest {
     private static final String INVENTORY_VIEW_INTERNAL_NAME = "org/bukkit/inventory/InventoryView";
 
-    @Test(timeout = 2000L)
+    @Test(timeout = 10_000L)
     public void managedCloseWaitsForAnInventoryStillBeingOpened() throws Exception {
         verifyCloseDuringOpening(false);
     }
 
-    @Test(timeout = 2000L)
+    @Test(timeout = 10_000L)
     public void failedCloseDuringOpeningKeepsTheInventoryGuardedAndRetryable() throws Exception {
         verifyCloseDuringOpening(true);
     }

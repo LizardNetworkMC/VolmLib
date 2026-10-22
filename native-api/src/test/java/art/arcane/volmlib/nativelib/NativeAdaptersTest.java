@@ -11,11 +11,13 @@ public class NativeAdaptersTest {
     @Test
     public void selectsOnlyExplicitSupportedReleases() {
         assertEquals(NativeVersion.V1_21_R7, NativeVersion.resolve("1.21.11-R0.1-SNAPSHOT").orElseThrow());
+        assertEquals(NativeVersion.V26_1_R1, NativeVersion.resolve("26.1-R0.1-SNAPSHOT").orElseThrow());
+        assertEquals(NativeVersion.V26_1_R1, NativeVersion.resolve("26.1.1").orElseThrow());
         assertEquals(NativeVersion.V26_2_R1, NativeVersion.resolve("26.1.2").orElseThrow());
         assertEquals(NativeVersion.V26_2_R1, NativeVersion.resolve("26.1.2.build.74-stable").orElseThrow());
         assertEquals(NativeVersion.V26_2_R1, NativeVersion.resolve("26.2-R0.1-SNAPSHOT").orElseThrow());
         assertEquals(NativeVersion.V26_3_R1, NativeVersion.resolve("26.3.build.25-alpha").orElseThrow());
-        for (String version : new String[]{"1.21.10", "26.1", "26.1.1", "26.1.3", "26.2.1", "27.2", "26.2garbage", "26.2.build.invalid", ""}) {
+        for (String version : new String[]{"1.21.10", "26.1.3", "26.2.1", "27.2", "26.2garbage", "26.2.build.invalid", ""}) {
             assertTrue(version, NativeVersion.resolve(version).isEmpty());
         }
         assertTrue(NativeVersion.resolve(null).isEmpty());
@@ -26,7 +28,7 @@ public class NativeAdaptersTest {
         assertEquals(NativeVersion.V26_2_R1, NativeVersion.resolve("26.2.0").orElseThrow());
         assertEquals(NativeVersion.V26_3_R1, NativeVersion.resolve("26.3.0-R0.1-SNAPSHOT").orElseThrow());
         assertEquals(NativeVersion.V26_3_R1, NativeVersion.resolve("26.3.0.build.25-alpha").orElseThrow());
-        assertTrue(NativeVersion.resolve("26.1.0").isEmpty());
+        assertEquals(NativeVersion.V26_1_R1, NativeVersion.resolve("26.1.0").orElseThrow());
         assertTrue(NativeVersion.resolve("1.21.0").isEmpty());
         assertTrue(NativeVersion.resolve("26.3.1").isEmpty());
     }
@@ -47,6 +49,8 @@ public class NativeAdaptersTest {
 
     @Test
     public void missingCapabilitiesStayUnavailableWithoutLoadingAnotherVersion() {
+        assertTrue(NativeAdapters.find(Probe.class, "26.1").isEmpty());
+        assertFalse(NativeAdapters.available(Probe.class, NativeVersion.V26_1_R1));
         assertTrue(NativeAdapters.find(Probe.class, "26.3").isEmpty());
         assertTrue(NativeAdapters.find(Probe.class, "27.2").isEmpty());
         assertThrows(UnsupportedOperationException.class, () -> NativeAdapters.require(Probe.class, "26.3"));

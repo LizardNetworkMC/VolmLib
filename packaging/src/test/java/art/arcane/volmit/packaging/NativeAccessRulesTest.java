@@ -19,14 +19,14 @@ class NativeAccessRulesTest {
     @Test
     void preparesBundledRulesAndPreservesUnchangedInputs() throws Exception {
         Path fabric = NativeAccessRules.prepare("minecraft26_3", "fabric", temporary.toFile()).toPath();
-        assertTrue(Files.readString(fabric).startsWith("accessWidener v2 official\n"));
+        assertEquals("accessWidener v2 official", Files.readAllLines(fabric).get(0));
         FileTime timestamp = FileTime.fromMillis(1000L);
         Files.setLastModifiedTime(fabric, timestamp);
         assertEquals(fabric, NativeAccessRules.prepare("minecraft26_3", "fabric", temporary.toFile()).toPath());
         assertEquals(timestamp, Files.getLastModifiedTime(fabric));
         Files.writeString(fabric, "stale");
         NativeAccessRules.prepare("minecraft26_3", "fabric", temporary.toFile());
-        assertTrue(Files.readString(fabric).startsWith("accessWidener v2 official\n"));
+        assertEquals("accessWidener v2 official", Files.readAllLines(fabric).get(0));
     }
 
     @Test
@@ -51,7 +51,7 @@ class NativeAccessRulesTest {
             Path current = NativeAccessRules.prepare("minecraft26_3", loader.getKey(), directory.resolve("26.3").toFile()).toPath();
             String currentRules = Files.readString(current);
             Path older = NativeAccessRules.prepare("minecraft1_21_1", loader.getKey(), directory.resolve("1.21.1").toFile()).toPath();
-            assertTrue(Files.readString(older).contains(loader.getValue()));
+            assertTrue(Files.readString(older).replace("\r\n", "\n").contains(loader.getValue()));
             assertEquals(currentRules, Files.readString(current));
             FileTime timestamp = FileTime.fromMillis(1000L);
             Files.setLastModifiedTime(older, timestamp);

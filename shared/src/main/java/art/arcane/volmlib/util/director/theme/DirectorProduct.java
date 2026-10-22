@@ -1,6 +1,7 @@
 package art.arcane.volmlib.util.director.theme;
 
 public enum DirectorProduct {
+    DREAD,
     IRIS,
     REACT,
     ADAPT,
@@ -8,5 +9,13 @@ public enum DirectorProduct {
     HIDDENORE,
     WORMHOLES,
     GLOSS,
-    SHAPEDPORTALS
+    SHAPEDPORTALS,
+    BYTECOMPANIONS,
+    VIGIL,
+    ENFOLD,
+    UNDERTOW,
+    CINDER,
+    KEYSTONE,
+    ECHELON,
+    SKYPRIME
 }

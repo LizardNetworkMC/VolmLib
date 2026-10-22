@@ -151,6 +151,52 @@ public class IntegrationMetricSchemaTest {
     }
 
     @Test
+    public void exposesEchelonStorageAndSyncSchema() {
+        Set<String> keys = IntegrationMetricSchema.echelonKeys();
+
+        assertEquals(Set.of(
+                IntegrationMetricSchema.ECHELON_STORAGE_DIRTY,
+                IntegrationMetricSchema.ECHELON_STORAGE_COLLECTIONS,
+                IntegrationMetricSchema.ECHELON_SYNC_LAG_MS
+        ), keys);
+        assertTrue(IntegrationMetricSchema.allKeys().containsAll(keys));
+        for (String key : keys) {
+            IntegrationMetricDescriptor descriptor = IntegrationMetricSchema.descriptor(key);
+            assertTrue(key.startsWith("echelon."));
+            assertEquals("echelon", descriptor.tags().get("plugin"));
+        }
+        for (String key : Set.of(
+                IntegrationMetricSchema.ECHELON_STORAGE_DIRTY,
+                IntegrationMetricSchema.ECHELON_STORAGE_COLLECTIONS
+        )) {
+            IntegrationMetricDescriptor descriptor = IntegrationMetricSchema.descriptor(key);
+            assertEquals("storage", descriptor.tags().get("domain"));
+            assertEquals(IntegrationMetricType.INTEGER, descriptor.type());
+        }
+
+        IntegrationMetricDescriptor syncLag = IntegrationMetricSchema.descriptor(
+                IntegrationMetricSchema.ECHELON_SYNC_LAG_MS
+        );
+        assertEquals("sync", syncLag.tags().get("domain"));
+        assertEquals(IntegrationMetricType.LONG, syncLag.type());
+        assertEquals("milliseconds", syncLag.unit());
+    }
+
+    @Test
+    public void exposesSkyPrimeIslandSchema() {
+        Set<String> keys = IntegrationMetricSchema.skyPrimeKeys();
+
+        assertEquals(6, keys.size());
+        assertTrue(IntegrationMetricSchema.allKeys().containsAll(keys));
+        for (String key : keys) {
+            IntegrationMetricDescriptor descriptor = IntegrationMetricSchema.descriptor(key);
+            assertTrue(key.matches("skyprime\\.[a-z]+\\.[a-z-]+"));
+            assertEquals("skyprime", descriptor.tags().get("plugin"));
+            assertEquals(IntegrationMetricType.INTEGER, descriptor.type());
+        }
+    }
+
+    @Test
     public void exposesFoundationRuntimeSchema() {
         Set<String> keys = IntegrationMetricSchema.foundationKeys();
 

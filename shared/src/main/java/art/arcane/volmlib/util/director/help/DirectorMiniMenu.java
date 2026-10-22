@@ -20,6 +20,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.function.Predicate;
 
 public final class DirectorMiniMenu {
     public static final int MENU_LINE_COUNT = 19;
@@ -45,6 +46,28 @@ public final class DirectorMiniMenu {
         }
 
         for (String line : renderConsole(page, resolver)) {
+            deliverPlainLine(sender, line);
+        }
+    }
+
+    public static void deliver(Object sender, DirectorHelpPage page, Theme theme, DirectorTextResolver resolver,
+                               Predicate<DirectorRuntimeNode> permitted) {
+        if (sender == null || page == null) {
+            return;
+        }
+
+        List<DirectorRuntimeNode> entries = sortedChildren(page.node()).stream().filter(permitted).toList();
+        if (isPlayer(sender)) {
+            int pages = Math.max(1, (entries.size() + MAX_ENTRIES_PER_PAGE - 1) / MAX_ENTRIES_PER_PAGE);
+            int index = Math.max(0, Math.min(page.pageIndex(), pages - 1));
+            int start = index * MAX_ENTRIES_PER_PAGE;
+            DirectorHelpPage filtered = new DirectorHelpPage(page.node(),
+                    entries.subList(start, Math.min(entries.size(), start + MAX_ENTRIES_PER_PAGE)), index, pages);
+            deliver(sender, render(filtered, theme, resolver));
+            return;
+        }
+
+        for (String line : renderConsole(page.node(), entries, resolver)) {
             deliverPlainLine(sender, line);
         }
     }
@@ -354,18 +377,21 @@ public final class DirectorMiniMenu {
             return List.of();
         }
 
+        return renderConsole(page.node(), sortedChildren(page.node()), resolver);
+    }
+
+    private static List<String> renderConsole(DirectorRuntimeNode node, List<DirectorRuntimeNode> entries, DirectorTextResolver resolver) {
         DirectorTextResolver activeResolver = resolver == null ? DirectorTextResolver.ENGLISH : resolver;
-        List<DirectorRuntimeNode> entries = sortedChildren(page.node());
         List<String> lines = new ArrayList<>();
-        lines.add("--- " + page.node().path() + " ---");
+        lines.add("--- " + node.path() + " ---");
 
         if (entries.isEmpty()) {
             lines.add(resolve(activeResolver, DirectorHelpMessages.NO_SUBCOMMANDS));
             return lines;
         }
 
-        for (DirectorRuntimeNode node : entries) {
-            lines.add(renderConsoleNodeLine(node, activeResolver));
+        for (DirectorRuntimeNode entry : entries) {
+            lines.add(renderConsoleNodeLine(entry, activeResolver));
         }
 
         return lines;

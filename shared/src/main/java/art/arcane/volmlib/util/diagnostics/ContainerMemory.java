@@ -1,6 +1,8 @@
 package art.arcane.volmlib.util.diagnostics;
 
 import java.io.IOException;
+import java.nio.file.FileSystem;
+import java.nio.file.FileSystems;
 import java.nio.file.Files;
 import java.nio.file.InvalidPathException;
 import java.nio.file.Path;
@@ -15,7 +17,7 @@ public final class ContainerMemory {
     private static final long SAMPLE_INTERVAL_NANOS = 200_000_000L;
     private static final long V1_UNLIMITED = Long.MAX_VALUE - Integer.MAX_VALUE;
     private static final Snapshot UNSUPPORTED = new Snapshot(Long.MAX_VALUE, 0, 0, 0, Long.MAX_VALUE);
-    private static final ContainerMemory SYSTEM = new ContainerMemory(new Sources(Files::readString, System::nanoTime));
+    private static final ContainerMemory SYSTEM = new ContainerMemory(new Sources(FileSystems.getDefault(), Files::readString, System::nanoTime));
 
     private final Sources sources;
     private final List<Scope> scopes;
@@ -114,8 +116,8 @@ public final class ContainerMemory {
     }
 
     private List<Scope> discoverScopes() {
-        String memberships = read(Path.of("/proc/self/cgroup"));
-        String mountInfo = read(Path.of("/proc/self/mountinfo"));
+        String memberships = read(sources.fileSystem().getPath("/proc/self/cgroup"));
+        String mountInfo = read(sources.fileSystem().getPath("/proc/self/mountinfo"));
         if (memberships == null || mountInfo == null) {
             return List.of();
         }
@@ -149,17 +151,17 @@ public final class ContainerMemory {
                 continue;
             }
             try {
-                Path root = Path.of(unescape(location[3])).normalize();
-                Path mountPoint = Path.of(unescape(location[4])).normalize();
-                Path member = Path.of(membership).normalize();
+                Path root = sources.fileSystem().getPath(unescape(location[3])).normalize();
+                Path mountPoint = sources.fileSystem().getPath(unescape(location[4])).normalize();
+                Path member = sources.fileSystem().getPath(membership).normalize();
                 if (!root.isAbsolute() || !mountPoint.isAbsolute() || !member.isAbsolute()) {
                     continue;
                 }
                 Path relative;
                 if (member.startsWith(root)) {
                     relative = root.relativize(member);
-                } else if (!root.equals(Path.of("/"))) {
-                    relative = Path.of("/").relativize(member);
+                } else if (!root.equals(sources.fileSystem().getPath("/"))) {
+                    relative = sources.fileSystem().getPath("/").relativize(member);
                     Path candidate = mountPoint.resolve(relative).normalize();
                     if (read(candidate.resolve(v2 ? "memory.current" : "memory.usage_in_bytes")) == null
                             && read(candidate.resolve(v2 ? "memory.max" : "memory.limit_in_bytes")) == null) {
@@ -237,8 +239,9 @@ public final class ContainerMemory {
         }
     }
 
-    record Sources(FileReader files, LongSupplier nanoTime) {
+    record Sources(FileSystem fileSystem, FileReader files, LongSupplier nanoTime) {
         Sources {
+            Objects.requireNonNull(fileSystem);
             Objects.requireNonNull(files);
             Objects.requireNonNull(nanoTime);
         }

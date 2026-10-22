@@ -84,6 +84,34 @@ public class DirectorMiniMenuConsoleTest {
     }
 
     @Test
+    public void permissionFilteredConsoleDeliveryIncludesAllowedEntriesBeyondThePlayerPage() {
+        DirectorMiniMenu.DirectorHelpPage page = DirectorMiniMenu.resolveHelp(engine, List.of(), 1).orElseThrow();
+        ConsoleSender sender = new ConsoleSender();
+
+        DirectorMiniMenu.deliver(sender, page, DirectorMiniMenu.Theme.reactBlue(), DirectorTextResolver.ENGLISH,
+                node -> !node.getDescriptor().getName().equals("empty"));
+
+        assertEquals(List.of("--- /test ---", "ping - Check connectivity", "pregen - Category of Commands",
+                "silent - No description provided"), sender.plain);
+    }
+
+    @Test
+    public void permissionFilteredPlayerDeliveryClampsPagesAfterFiltering() {
+        DirectorMiniMenu.DirectorHelpPage page = DirectorMiniMenu.resolveHelp(engine, List.of("help=4"), 1).orElseThrow();
+        PlayerSender sender = new PlayerSender();
+
+        DirectorMiniMenu.deliver(sender, page, DirectorMiniMenu.Theme.reactBlue(), DirectorTextResolver.ENGLISH,
+                node -> node.getDescriptor().getName().equals("ping"));
+
+        String output = String.join("\n", sender.rich);
+        assertTrue(output.contains("ping"));
+        assertFalse(output.contains("pregen"));
+        assertFalse(output.contains("silent"));
+        assertFalse(output.contains("Page 2"));
+        assertFalse(output.contains("help=3"));
+    }
+
+    @Test
     public void headerShowsTheFullCommandPathWithoutPageIndicator() {
         List<String> lines = console(List.of("pregen"), 1);
 

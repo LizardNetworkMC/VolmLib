@@ -81,6 +81,9 @@ public final class RemoteLanguageCatalog implements AutoCloseable {
 
     public URI sourceUri(String locale) {
         String requiredLocale = requireSupportedLocale(locale);
+        if (source.bundled()) {
+            return URI.create("classpath:/languages/" + requiredLocale + options.extension());
+        }
         String path = source.revision() + "/" + normalizedSourcePath(options.sourcePath())
                 + requiredLocale + options.extension();
         return options.repositoryRoot().resolve(path);
@@ -258,6 +261,19 @@ public final class RemoteLanguageCatalog implements AutoCloseable {
     }
 
     private byte[] fetch(String locale, URI uri) throws IOException {
+        if (source.bundled()) {
+            String resource = "languages/" + locale + options.extension();
+            try (InputStream input = options.resourceLoader().getResourceAsStream(resource)) {
+                if (input == null) {
+                    throw new IOException("Missing bundled language resource: " + resource);
+                }
+                byte[] bytes = input.readNBytes(MAXIMUM_DOWNLOAD_BYTES + 1);
+                if (bytes.length > MAXIMUM_DOWNLOAD_BYTES) {
+                    throw new IOException("Bundled locale exceeds " + MAXIMUM_DOWNLOAD_BYTES + " bytes");
+                }
+                return bytes;
+            }
+        }
         URLConnection connection;
         try {
             connection = uri.toURL().openConnection();
@@ -397,6 +413,10 @@ public final class RemoteLanguageCatalog implements AutoCloseable {
         } catch (IOException failure) {
             throw new IllegalStateException("Failed to read " + options.manifestResource(), failure);
         }
+        String mode = properties.getProperty("mode", "remote").trim();
+        if (!mode.equals("remote") && !mode.equals("bundled")) {
+            throw new IllegalStateException("Invalid language source mode: " + mode);
+        }
         String revision = properties.getProperty("revision", "").trim();
         if (!SOURCE_REFERENCE_PATTERN.matcher(revision).matches()) {
             throw new IllegalStateException("Invalid language source reference");
@@ -422,6 +442,7 @@ public final class RemoteLanguageCatalog implements AutoCloseable {
         }
         return new Source(
                 revision,
+                mode.equals("bundled"),
                 Collections.unmodifiableSet(availableLocales),
                 Collections.unmodifiableMap(hashes)
         );
@@ -482,6 +503,6 @@ public final class RemoteLanguageCatalog implements AutoCloseable {
     private record InstallRequest(String locale, Path destination) {
     }
 
-    private record Source(String revision, Set<String> locales, Map<String, String> hashes) {
+    private record Source(String revision, boolean bundled, Set<String> locales, Map<String, String> hashes) {
     }
 }

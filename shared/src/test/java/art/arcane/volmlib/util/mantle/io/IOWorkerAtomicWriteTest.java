@@ -9,6 +9,7 @@ import java.io.FilterOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.nio.file.AccessDeniedException;
 import java.nio.file.AtomicMoveNotSupportedException;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -121,6 +122,23 @@ public class IOWorkerAtomicWriteTest {
             files.when(() -> Files.move(staged, target, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING))
                     .thenThrow(new AtomicMoveNotSupportedException(staged.toString(), target.toString(), "Unsupported"));
             assertThrows(AtomicMoveNotSupportedException.class, () -> support.replaceAtomically(NAME, staged));
+        }
+        assertArrayEquals(original, Files.readAllBytes(target));
+        assertArrayEquals(new byte[]{7, 8}, Files.readAllBytes(staged));
+    }
+
+    @Test(timeout = 5_000L)
+    public void deniedAtomicMoveFailsWithoutReplacingTheTarget() throws Exception {
+        Path root = temporaryFolder.newFolder().toPath();
+        Path target = root.resolve(NAME);
+        byte[] original = {1, 2, 3, 4};
+        Files.write(target, original);
+        Path staged = Files.write(root.resolve("staged"), new byte[]{7, 8});
+        try (IOWorkerSupport support = new IOWorkerSupport(root.toFile());
+             MockedStatic<Files> files = mockStatic(Files.class)) {
+            files.when(() -> Files.move(staged, target, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING))
+                    .thenThrow(new AccessDeniedException(staged.toString(), target.toString(), "Access denied"));
+            assertThrows(AccessDeniedException.class, () -> support.replaceAtomically(NAME, staged));
         }
         assertArrayEquals(original, Files.readAllBytes(target));
         assertArrayEquals(new byte[]{7, 8}, Files.readAllBytes(staged));

@@ -185,6 +185,25 @@ public final class IntegrationMetricSchema {
     public static final String FOUNDATION_WORTH_ENTRIES = "foundation.worth-entries";
     public static final String FOUNDATION_WORTH_READ_ONLY = "foundation.worth-read-only";
 
+    public static final String BYTECOMPANIONS_COMPANION_DEFINITIONS = "bytecompanions.companion-definitions";
+    public static final String BYTECOMPANIONS_LOADED_PLAYERS = "bytecompanions.loaded-players";
+    public static final String BYTECOMPANIONS_ACTIVE_COMPANIONS = "bytecompanions.active-companions";
+    public static final String BYTECOMPANIONS_ACTIVE_DECORATIONS = "bytecompanions.active-decorations";
+    public static final String BYTECOMPANIONS_PLAYER_TICK_FAILURES_TOTAL = "bytecompanions.player-tick-failures-total";
+    public static final String BYTECOMPANIONS_PLAYER_LOAD_FAILURES_TOTAL = "bytecompanions.player-load-failures-total";
+    public static final String BYTECOMPANIONS_PARTICLE_PACKETS_TOTAL = "bytecompanions.particle-packets-total";
+
+    public static final String ECHELON_STORAGE_DIRTY = "echelon.storage.dirty";
+    public static final String ECHELON_STORAGE_COLLECTIONS = "echelon.storage.collections";
+    public static final String ECHELON_SYNC_LAG_MS = "echelon.sync.lag-ms";
+
+    public static final String SKYPRIME_ISLANDS_TOTAL = "skyprime.islands.total";
+    public static final String SKYPRIME_ISLANDS_ACTIVE = "skyprime.islands.active";
+    public static final String SKYPRIME_WORLDS_LOADED = "skyprime.worlds.loaded";
+    public static final String SKYPRIME_WORLDS_JOBS = "skyprime.worlds.jobs";
+    public static final String SKYPRIME_VALUE_SCANS = "skyprime.value.scans";
+    public static final String SKYPRIME_STORAGE_HEALTHY = "skyprime.storage.healthy";
+
     private static final Map<String, IntegrationMetricDescriptor> DESCRIPTORS = buildDescriptors();
     private static final Set<String> IRIS_KEYS = buildIrisKeys();
     private static final Set<String> IRIS_WORLD_KEYS = buildIrisWorldKeys();
@@ -368,6 +387,37 @@ public final class IntegrationMetricSchema {
                 SHAPEDPORTALS_CREATED_PORTALS_TOTAL,
                 SHAPEDPORTALS_REJECTED_ATTEMPTS_TOTAL,
                 SHAPEDPORTALS_CREATION_SUCCESS_PERCENT
+        );
+    }
+
+    public static Set<String> byteCompanionsKeys() {
+        return Set.of(
+                BYTECOMPANIONS_COMPANION_DEFINITIONS,
+                BYTECOMPANIONS_LOADED_PLAYERS,
+                BYTECOMPANIONS_ACTIVE_COMPANIONS,
+                BYTECOMPANIONS_ACTIVE_DECORATIONS,
+                BYTECOMPANIONS_PLAYER_TICK_FAILURES_TOTAL,
+                BYTECOMPANIONS_PLAYER_LOAD_FAILURES_TOTAL,
+                BYTECOMPANIONS_PARTICLE_PACKETS_TOTAL
+        );
+    }
+
+    public static Set<String> echelonKeys() {
+        return Set.of(
+                ECHELON_STORAGE_DIRTY,
+                ECHELON_STORAGE_COLLECTIONS,
+                ECHELON_SYNC_LAG_MS
+        );
+    }
+
+    public static Set<String> skyPrimeKeys() {
+        return Set.of(
+                SKYPRIME_ISLANDS_TOTAL,
+                SKYPRIME_ISLANDS_ACTIVE,
+                SKYPRIME_WORLDS_LOADED,
+                SKYPRIME_WORLDS_JOBS,
+                SKYPRIME_VALUE_SCANS,
+                SKYPRIME_STORAGE_HEALTHY
         );
     }
 
@@ -560,6 +610,22 @@ public final class IntegrationMetricSchema {
         putMetric(descriptors, FOUNDATION_PROFILE_SAVE_FAILURES_TOTAL, IntegrationMetricType.LONG, "failures", "foundation", "persistence");
         putMetric(descriptors, FOUNDATION_WORTH_ENTRIES, IntegrationMetricType.INTEGER, "items", "foundation", "economy");
         putMetric(descriptors, FOUNDATION_WORTH_READ_ONLY, IntegrationMetricType.INTEGER, "boolean", "foundation", "economy");
+        putMetric(descriptors, BYTECOMPANIONS_COMPANION_DEFINITIONS, IntegrationMetricType.INTEGER, "definitions", "bytecompanions", "companions");
+        putMetric(descriptors, BYTECOMPANIONS_LOADED_PLAYERS, IntegrationMetricType.INTEGER, "players", "bytecompanions", "companions");
+        putMetric(descriptors, BYTECOMPANIONS_ACTIVE_COMPANIONS, IntegrationMetricType.INTEGER, "companions", "bytecompanions", "companions");
+        putMetric(descriptors, BYTECOMPANIONS_ACTIVE_DECORATIONS, IntegrationMetricType.INTEGER, "decorations", "bytecompanions", "decorations");
+        putMetric(descriptors, BYTECOMPANIONS_PLAYER_TICK_FAILURES_TOTAL, IntegrationMetricType.LONG, "failures", "bytecompanions", "scheduling");
+        putMetric(descriptors, BYTECOMPANIONS_PLAYER_LOAD_FAILURES_TOTAL, IntegrationMetricType.LONG, "failures", "bytecompanions", "persistence");
+        putMetric(descriptors, BYTECOMPANIONS_PARTICLE_PACKETS_TOTAL, IntegrationMetricType.LONG, "packets", "bytecompanions", "particles");
+        putMetric(descriptors, ECHELON_STORAGE_DIRTY, IntegrationMetricType.INTEGER, "records", "echelon", "storage");
+        putMetric(descriptors, ECHELON_STORAGE_COLLECTIONS, IntegrationMetricType.INTEGER, "collections", "echelon", "storage");
+        putMetric(descriptors, ECHELON_SYNC_LAG_MS, IntegrationMetricType.LONG, "milliseconds", "echelon", "sync");
+        putMetric(descriptors, SKYPRIME_ISLANDS_TOTAL, IntegrationMetricType.INTEGER, "islands", "skyprime", "islands");
+        putMetric(descriptors, SKYPRIME_ISLANDS_ACTIVE, IntegrationMetricType.INTEGER, "islands", "skyprime", "islands");
+        putMetric(descriptors, SKYPRIME_WORLDS_LOADED, IntegrationMetricType.INTEGER, "worlds", "skyprime", "worlds");
+        putMetric(descriptors, SKYPRIME_WORLDS_JOBS, IntegrationMetricType.INTEGER, "jobs", "skyprime", "worlds");
+        putMetric(descriptors, SKYPRIME_VALUE_SCANS, IntegrationMetricType.INTEGER, "scans", "skyprime", "value");
+        putMetric(descriptors, SKYPRIME_STORAGE_HEALTHY, IntegrationMetricType.INTEGER, "boolean", "skyprime", "storage");
 
         return Map.copyOf(descriptors);
     }
