@@ -79,6 +79,7 @@ public final class BukkitConfigEditor implements Listener, AutoCloseable {
     private final Map<UUID, BukkitInventoryShutdown.View> openInventories = new ConcurrentHashMap<>();
     private final Set<CompletableFuture<Void>> openings = new HashSet<>();
     private volatile EditorLayout layout;
+    private volatile Set<List<String>> dynamicSections = Set.of();
     private volatile Feedback feedback;
     private volatile boolean closed;
     private BukkitInventoryShutdown inventoryShutdown;
@@ -178,6 +179,21 @@ public final class BukkitConfigEditor implements Listener, AutoCloseable {
             throw new IllegalStateException("Configure the editor layout before opening it");
         }
         this.layout = Objects.requireNonNull(layout, "layout");
+    }
+
+    public synchronized void configureDynamicSections(Set<List<String>> sections) {
+        if (closed || !sessions.isEmpty()) {
+            throw new IllegalStateException("Configure dynamic sections before opening the editor");
+        }
+        Set<List<String>> copied = new HashSet<>();
+        for (List<String> path : Objects.requireNonNull(sections, "sections")) {
+            List<String> section = List.copyOf(path);
+            if (section.isEmpty()) {
+                throw new IllegalArgumentException("Dynamic sections require a non-root path");
+            }
+            copied.add(section);
+        }
+        dynamicSections = Set.copyOf(copied);
     }
 
     @Override
@@ -590,7 +606,7 @@ public final class BukkitConfigEditor implements Listener, AutoCloseable {
             return;
         }
         List<ConfigEditorDocument.Entry> entries = requested.document() == null ? List.of()
-                : presentedEntries(requested.document(), requested.path(), layout);
+                : presentedEntries(requested.document(), requested.path(), layout, dynamicSections);
         List<RootShortcut> shortcuts = layout != null && requested.path().isEmpty() && requested.document() != null
                 ? layout.shortcuts() : List.of();
         int pageSize = pageSize(requested.path());
@@ -739,19 +755,20 @@ public final class BukkitConfigEditor implements Listener, AutoCloseable {
         return layout == null ? text(player, key) : styledMarkup(text(player, key), color).legacy();
     }
 
-    static List<ConfigEditorDocument.Entry> presentedEntries(ConfigEditorDocument document, List<String> path, EditorLayout layout) {
+    static List<ConfigEditorDocument.Entry> presentedEntries(ConfigEditorDocument document, List<String> path, EditorLayout layout, Set<List<String>> dynamicSections) {
         if (layout == null) {
             return orderedEntries(document, path);
         }
         ArrayList<ConfigEditorDocument.Entry> entries = new ArrayList<>();
         for (ConfigEditorDocument.Entry entry : document.entries(path)) {
-            if (layout.entries().apply(entry.path()) != null) {
+            if (layout.entries().apply(entry.path()) != null || dynamicSections.contains(path)) {
                 entries.add(entry);
             }
         }
         if (document.value(path).isJsonObject()) {
             entries.sort(Comparator.comparingInt((ConfigEditorDocument.Entry entry) -> {
-                return layout.entries().apply(entry.path()).order();
+                EntryPresentation presentation = layout.entries().apply(entry.path());
+                return presentation == null ? Integer.MAX_VALUE : presentation.order();
             }).thenComparing(ConfigEditorDocument.Entry::name));
         }
         return List.copyOf(entries);

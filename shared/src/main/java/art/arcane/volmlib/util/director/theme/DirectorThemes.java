@@ -1,6 +1,15 @@
 package art.arcane.volmlib.util.director.theme;
 
 public final class DirectorThemes {
+    public static final DirectorTheme DREAD = new DirectorTheme(
+            DirectorProduct.DREAD,
+            "#FF725E",
+            "#FFD166",
+            "#FFD166",
+            "minecraft:block.note_block.chime",
+            "minecraft:block.note_block.bass"
+    );
+
     public static final DirectorTheme IRIS = new DirectorTheme(
             DirectorProduct.IRIS,
             "#34eb6b",
@@ -73,6 +82,78 @@ public final class DirectorThemes {
             "minecraft:block.respawn_anchor.deplete"
     );
 
+    public static final DirectorTheme BYTECOMPANIONS = new DirectorTheme(
+            DirectorProduct.BYTECOMPANIONS,
+            "#ffcc00",
+            "#ff9900",
+            "#ffdb80",
+            "minecraft:block.amethyst_cluster.break",
+            "minecraft:block.respawn_anchor.deplete"
+    );
+
+    public static final DirectorTheme VIGIL = new DirectorTheme(
+            DirectorProduct.VIGIL,
+            "#FF956B",
+            "#FFD28A",
+            "#FFD28A",
+            "minecraft:block.amethyst_cluster.break",
+            "minecraft:block.beacon.deactivate"
+    );
+
+    public static final DirectorTheme ENFOLD = new DirectorTheme(
+            DirectorProduct.ENFOLD,
+            "#B5E3C6",
+            "#70D6AC",
+            "#F2BD66",
+            "minecraft:block.amethyst_cluster.break",
+            "minecraft:block.beacon.deactivate"
+    );
+
+    public static final DirectorTheme UNDERTOW = new DirectorTheme(
+            DirectorProduct.UNDERTOW,
+            "#48C9A0",
+            "#153F3B",
+            "#91E5D2",
+            "minecraft:block.amethyst_cluster.break",
+            "minecraft:block.beacon.deactivate"
+    );
+
+    public static final DirectorTheme CINDER = new DirectorTheme(
+            DirectorProduct.CINDER,
+            "#e46a32",
+            "#f3bf62",
+            "#f3bf62",
+            "minecraft:block.amethyst_cluster.break",
+            "minecraft:block.beacon.deactivate"
+    );
+
+    public static final DirectorTheme KEYSTONE = new DirectorTheme(
+            DirectorProduct.KEYSTONE,
+            "#E89B62",
+            "#70452F",
+            "#F4D58D",
+            "minecraft:block.amethyst_block.chime",
+            "minecraft:block.note_block.bass"
+    );
+
+    public static final DirectorTheme ECHELON = new DirectorTheme(
+            DirectorProduct.ECHELON,
+            "#4f63e6",
+            "#2f3bb0",
+            "#aab7ff",
+            "minecraft:entity.experience_orb.pickup",
+            "minecraft:block.note_block.bass"
+    );
+
+    public static final DirectorTheme SKYPRIME = new DirectorTheme(
+            DirectorProduct.SKYPRIME,
+            "#00d8e8",
+            "#087e8b",
+            "#ffffff",
+            "minecraft:entity.experience_orb.pickup",
+            "minecraft:block.note_block.bass"
+    );
+
     private DirectorThemes() {
     }
 
@@ -82,6 +163,8 @@ public final class DirectorThemes {
         }
 
         return switch (product) {
+            case DREAD -> DREAD;
+            case CINDER -> CINDER;
             case IRIS -> IRIS;
             case REACT -> REACT;
             case ADAPT -> ADAPT;
@@ -90,6 +173,13 @@ public final class DirectorThemes {
             case WORMHOLES -> WORMHOLES;
             case GLOSS -> GLOSS;
             case SHAPEDPORTALS -> SHAPEDPORTALS;
+            case BYTECOMPANIONS -> BYTECOMPANIONS;
+            case VIGIL -> VIGIL;
+            case ENFOLD -> ENFOLD;
+            case UNDERTOW -> UNDERTOW;
+            case KEYSTONE -> KEYSTONE;
+            case ECHELON -> ECHELON;
+            case SKYPRIME -> SKYPRIME;
         };
     }
 }

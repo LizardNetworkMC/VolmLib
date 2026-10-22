@@ -22,6 +22,7 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 
@@ -80,15 +81,24 @@ public final class DirectorRuntimeEngine implements DirectorCommandEngine {
             return DirectorExecutionResult.notHandled();
         }
 
-        List<String> args = invocation.isPretokenized()
-                ? invocation.getArgs()
-                : tokenize(invocation.getArgs(), true);
-        Traversal traversal = traverseForExecution(root, args);
-        if (traversal.node == null || !traversal.node.isInvocable()) {
+        DirectorRoute route = route(invocation);
+        if (!route.invocable()) {
             return DirectorExecutionResult.notHandled();
         }
 
-        return invokeNode(invocation, traversal.node, traversal.remainingArgs);
+        return invokeNode(invocation, route.node(), route.remainingArgs());
+    }
+
+    public DirectorRoute route(DirectorInvocation invocation) {
+        DirectorInvocation required = Objects.requireNonNull(invocation, "invocation");
+        List<String> args = required.isPretokenized()
+                ? required.getArgs()
+                : tokenize(required.getArgs(), true);
+        if (root == null) {
+            return new DirectorRoute(null, args);
+        }
+
+        return traverseForExecution(root, args);
     }
 
     @Override
@@ -382,7 +392,7 @@ public final class DirectorRuntimeEngine implements DirectorCommandEngine {
         return bestDistance <= threshold ? best : null;
     }
 
-    private Traversal traverseForExecution(DirectorRuntimeNode start, List<String> args) {
+    private DirectorRoute traverseForExecution(DirectorRuntimeNode start, List<String> args) {
         DirectorRuntimeNode cursor = start;
         List<String> remaining = new ArrayList<>(args);
 
@@ -401,7 +411,7 @@ public final class DirectorRuntimeEngine implements DirectorCommandEngine {
             cursor = match;
         }
 
-        return new Traversal(cursor, remaining);
+        return new DirectorRoute(cursor, remaining);
     }
 
     private List<String> childNameSuggestions(DirectorRuntimeNode node, String partial) {
@@ -774,9 +784,6 @@ public final class DirectorRuntimeEngine implements DirectorCommandEngine {
     private String safeMessage(Throwable throwable) {
         String message = throwable.getMessage();
         return message == null || message.trim().isEmpty() ? throwable.getClass().getSimpleName() : message;
-    }
-
-    private record Traversal(DirectorRuntimeNode node, List<String> remainingArgs) {
     }
 
     private record MappingResult(Map<DirectorRuntimeParameter, String> mappedValues, List<String> errors) {

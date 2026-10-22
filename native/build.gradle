@@ -11,6 +11,9 @@ rootProject.file('packaging/src/main/resources/META-INF/volmlib/native-targets.p
 }
 
 subprojects {
+    if (project.name == 'v26_1_R1') {
+        return
+    }
     apply plugin: 'java-library'
     apply plugin: 'maven-publish'
     apply plugin: 'io.papermc.paperweight.userdev'

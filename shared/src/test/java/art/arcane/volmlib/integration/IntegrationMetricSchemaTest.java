@@ -151,6 +151,35 @@ public class IntegrationMetricSchemaTest {
     }
 
     @Test
+    public void exposesEchelonStorageSchema() {
+        Set<String> keys = IntegrationMetricSchema.echelonKeys();
+
+        assertEquals(2, keys.size());
+        assertTrue(IntegrationMetricSchema.allKeys().containsAll(keys));
+        for (String key : keys) {
+            IntegrationMetricDescriptor descriptor = IntegrationMetricSchema.descriptor(key);
+            assertTrue(key.startsWith("echelon."));
+            assertEquals("echelon", descriptor.tags().get("plugin"));
+            assertEquals("storage", descriptor.tags().get("domain"));
+            assertEquals(IntegrationMetricType.INTEGER, descriptor.type());
+        }
+    }
+
+    @Test
+    public void exposesSkyPrimeIslandSchema() {
+        Set<String> keys = IntegrationMetricSchema.skyPrimeKeys();
+
+        assertEquals(6, keys.size());
+        assertTrue(IntegrationMetricSchema.allKeys().containsAll(keys));
+        for (String key : keys) {
+            IntegrationMetricDescriptor descriptor = IntegrationMetricSchema.descriptor(key);
+            assertTrue(key.matches("skyprime\\.[a-z]+\\.[a-z-]+"));
+            assertEquals("skyprime", descriptor.tags().get("plugin"));
+            assertEquals(IntegrationMetricType.INTEGER, descriptor.type());
+        }
+    }
+
+    @Test
     public void exposesFoundationRuntimeSchema() {
         Set<String> keys = IntegrationMetricSchema.foundationKeys();
 

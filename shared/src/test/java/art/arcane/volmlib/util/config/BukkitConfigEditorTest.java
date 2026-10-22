@@ -41,6 +41,7 @@ import java.lang.reflect.Constructor;
 import java.lang.reflect.Field;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Set;
 import java.util.Map;
 import java.util.HashSet;
 import java.util.UUID;
@@ -564,13 +565,56 @@ public class BukkitConfigEditorTest {
             default -> null;
         }, List.of());
 
-        List<String> configured = BukkitConfigEditor.presentedEntries(document, List.of(), layout).stream()
+        List<String> configured = BukkitConfigEditor.presentedEntries(document, List.of(), layout, Set.of()).stream()
                 .map(ConfigEditorDocument.Entry::name).toList();
-        List<String> standard = BukkitConfigEditor.presentedEntries(document, List.of(), null).stream()
+        List<String> standard = BukkitConfigEditor.presentedEntries(document, List.of(), null, Set.of()).stream()
                 .map(ConfigEditorDocument.Entry::name).toList();
 
         assertEquals(List.of("beta", "alpha"), configured);
         assertEquals(List.of("alpha", "beta", "custom"), standard);
+    }
+
+
+    @Test
+    public void dynamicSectionsExposeOnlyDirectChildrenAndKeepTableArrayOrder() throws IOException {
+        ConfigEditorDocument document = ConfigEditorDocument.fromToml("unknown = true\n[[materials]]\nname = \"STONE\"\n[[materials]]\nname = \"BOOK\"\n[policies.\"minecraft:zeta\"]\nenabled = true\n[policies.\"minecraft:alpha\"]\nenabled = false");
+        TextKey label = TextKey.of("test.dynamic", "Policies");
+        BukkitConfigEditor.EditorLayout layout = new BukkitConfigEditor.EditorLayout(label, path -> null, List.of());
+        Set<List<String>> sections = Set.of(List.of("policies"), List.of("materials"));
+        assertTrue(BukkitConfigEditor.presentedEntries(document, List.of(), layout, sections).isEmpty());
+        assertEquals(List.of("minecraft:alpha", "minecraft:zeta"), BukkitConfigEditor.presentedEntries(document,
+                List.of("policies"), layout, sections).stream().map(ConfigEditorDocument.Entry::name).toList());
+        assertEquals(List.of("0", "1"), BukkitConfigEditor.presentedEntries(document,
+                List.of("materials"), layout, sections).stream().map(ConfigEditorDocument.Entry::name).toList());
+        assertTrue(BukkitConfigEditor.presentedEntries(document, List.of("policies", "minecraft:alpha"), layout, sections).isEmpty());
+        assertTrue(BukkitConfigEditor.presentedEntries(document, List.of("policies"), layout, Set.of()).isEmpty());
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    public void dynamicSectionConfigurationIsDetachedAndRejectsActiveOrClosedEditors() throws Exception {
+        CleanupFixture fixture = new CleanupFixture();
+        fixture.inventories.clear();
+        List<String> path = new ArrayList<>(List.of("policies"));
+        Set<List<String>> supplied = new HashSet<>();
+        supplied.add(path);
+        fixture.editor.configureDynamicSections(supplied);
+        path.set(0, "changed");
+        supplied.clear();
+        Field dynamic = BukkitConfigEditor.class.getDeclaredField("dynamicSections");
+        dynamic.setAccessible(true);
+        assertEquals(Set.of(List.of("policies")), dynamic.get(fixture.editor));
+        assertThrows(IllegalArgumentException.class, () -> fixture.editor.configureDynamicSections(Set.of(List.of())));
+        Field sessionsField = BukkitConfigEditor.class.getDeclaredField("sessions");
+        sessionsField.setAccessible(true);
+        Map<UUID, Object> active = (Map<UUID, Object>) sessionsField.get(fixture.editor);
+        active.put(UUID.randomUUID(), new Object());
+        assertThrows(IllegalStateException.class, () -> fixture.editor.configureDynamicSections(Set.of()));
+        active.clear();
+        try (MockedStatic<HandlerList> handlers = mockStatic(HandlerList.class)) {
+            fixture.editor.close();
+        }
+        assertThrows(IllegalStateException.class, () -> fixture.editor.configureDynamicSections(Set.of()));
     }
 
     @Test

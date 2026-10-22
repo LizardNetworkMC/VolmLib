@@ -40,6 +40,83 @@ public class RemoteLanguageCatalogTest {
     public TemporaryFolder temporaryFolder = new TemporaryFolder();
 
     @Test
+    public void bundledModeInstallsValidatedResourceAndPreservesLocalEdits() throws Exception {
+        byte[] content = "Bonjour".getBytes(StandardCharsets.UTF_8);
+        HttpServer server = server("wrong remote content".getBytes(StandardCharsets.UTF_8));
+        try (URLClassLoader resources = bundledResources("bundled", content, hash(content));
+             RemoteLanguageCatalog catalog = catalog(server, resources)) {
+            Path target = temporaryFolder.newFolder().toPath().resolve("fr_FR.yml");
+            assertEquals("classpath:/languages/fr_FR.yml", catalog.sourceUri("fr_FR").toString());
+            assertEquals("Bonjour", catalog.readOrInstall("fr_FR", target,
+                    (locale, raw) -> assertEquals("Bonjour", raw)));
+            assertArrayEquals(content, Files.readAllBytes(target));
+            Files.writeString(target, "operator edit");
+            assertEquals("operator edit", catalog.readOrInstall("fr_FR", target,
+                    (locale, raw) -> assertEquals("operator edit", raw)));
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    public void bundledAsyncInstallUsesResourcesWithoutRemoteFallback() throws Exception {
+        byte[] content = "Bonjour".getBytes(StandardCharsets.UTF_8);
+        HttpServer server = server("wrong remote content".getBytes(StandardCharsets.UTF_8));
+        try (URLClassLoader resources = bundledResources("bundled", content, hash(content));
+             RemoteLanguageCatalog catalog = catalog(server, resources)) {
+            Path target = temporaryFolder.newFolder().toPath().resolve("fr_FR.yml");
+            CountDownLatch complete = new CountDownLatch(1);
+            AtomicReference<RemoteLanguageCatalog.DownloadResult> result = new AtomicReference<>();
+            assertEquals(RemoteLanguageCatalog.RequestState.SCHEDULED,
+                    catalog.requestInstallIfMissing("fr_FR", target,
+                            (locale, raw) -> assertEquals("Bonjour", raw), value -> {
+                                result.set(value);
+                                complete.countDown();
+                            }));
+            assertTrue(complete.await(5, TimeUnit.SECONDS));
+            assertTrue(result.get().successful());
+            assertArrayEquals(content, Files.readAllBytes(target));
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    public void bundledModeRejectsMissingOversizedMalformedAndMismatchedResources() throws Exception {
+        HttpServer server = server("remote fallback must not install".getBytes(StandardCharsets.UTF_8));
+        byte[][] invalid = {null, new byte[2 * 1024 * 1024 + 1], {(byte) 0xc3, (byte) 0x28}};
+        try {
+            for (byte[] content : invalid) {
+                try (URLClassLoader resources = bundledResources("bundled", content, null);
+                     RemoteLanguageCatalog catalog = catalog(server, resources)) {
+                    Path target = temporaryFolder.newFolder().toPath().resolve("fr_FR.yml");
+                    assertThrows(IOException.class, () -> catalog.readOrInstall("fr_FR", target, (locale, raw) -> {}));
+                    assertFalse(Files.exists(target));
+                }
+            }
+            try (URLClassLoader resources = bundledResources("bundled", "Bonjour".getBytes(StandardCharsets.UTF_8), "0".repeat(64));
+                 RemoteLanguageCatalog catalog = catalog(server, resources)) {
+                Path target = temporaryFolder.newFolder().toPath().resolve("fr_FR.yml");
+                assertThrows(IllegalArgumentException.class,
+                        () -> catalog.readOrInstall("fr_FR", target, (locale, raw) -> {}));
+                assertFalse(Files.exists(target));
+            }
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    public void unknownSourceModeIsRejected() throws Exception {
+        HttpServer server = server(new byte[0]);
+        try (URLClassLoader resources = bundledResources("unknown", null, null)) {
+            assertThrows(IllegalStateException.class, () -> catalog(server, resources));
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
     public void installsPartialCatalogsWithInvalidEntriesWithoutLosingValidTranslations() throws Exception {
         String source = "[message]\ngreeting = \"Bonjour {name}\"\ninvalid = 42\n";
         byte[] content = source.getBytes(StandardCharsets.UTF_8);
@@ -458,6 +535,17 @@ public class RemoteLanguageCatalogTest {
 
     private URLClassLoader resources(String hash) throws Exception {
         return resources(REVISION, hash);
+    }
+
+    private URLClassLoader bundledResources(String mode, byte[] content, String checksum) throws Exception {
+        Path resources = temporaryFolder.newFolder().toPath();
+        Files.writeString(resources.resolve("source.properties"), "mode=" + mode + "\nrevision=main\nlocales=fr_FR\n"
+                + (checksum == null ? "" : "sha256.fr_FR=" + checksum + "\n"));
+        if (content != null) {
+            Files.createDirectories(resources.resolve("languages"));
+            Files.write(resources.resolve("languages/fr_FR.yml"), content);
+        }
+        return new URLClassLoader(new URL[]{resources.toUri().toURL()}, null);
     }
 
     private URLClassLoader resources(String revision, String hash) throws Exception {
