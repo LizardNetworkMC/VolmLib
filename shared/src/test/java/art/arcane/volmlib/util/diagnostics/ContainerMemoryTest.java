@@ -1,8 +1,14 @@
 package art.arcane.volmlib.util.diagnostics;
 
+import org.junit.After;
+import org.junit.Before;
+import org.junit.Rule;
 import org.junit.Test;
+import org.junit.rules.TemporaryFolder;
 
 import java.io.IOException;
+import java.nio.file.FileSystem;
+import java.nio.file.FileSystems;
 import java.nio.file.Path;
 import java.util.HashMap;
 import java.util.Map;
@@ -15,6 +21,24 @@ import static org.junit.Assert.assertSame;
 import static org.junit.Assert.assertTrue;
 
 public class ContainerMemoryTest {
+    @Rule
+    public TemporaryFolder temporaryFolder = new TemporaryFolder();
+
+    private FileSystem fileSystem;
+
+    @Before
+    public void openUnixFileSystem() throws IOException {
+        fileSystem = FileSystems.newFileSystem(
+                temporaryFolder.getRoot().toPath().resolve("cgroup.zip"), Map.of("create", "true"));
+    }
+
+    @After
+    public void closeUnixFileSystem() throws IOException {
+        if (fileSystem != null) {
+            fileSystem.close();
+        }
+    }
+
     @Test
     public void v2MeasuresWorkingSetWithinNamespacedDockerMount() {
         Fixture fixture = new Fixture("0::/\n", v2Mount("/docker/container", "/sys/fs/cgroup"));
@@ -175,7 +199,7 @@ public class ContainerMemoryTest {
         return "21 20 0:27 " + root + " " + mountPoint + " rw,nosuid - cgroup2 cgroup rw\n";
     }
 
-    private static final class Fixture {
+    private final class Fixture {
         private final Map<String, String> files = new HashMap<>();
         private final AtomicInteger reads = new AtomicInteger();
         private final AtomicLong time = new AtomicLong();
@@ -198,7 +222,7 @@ public class ContainerMemoryTest {
         }
 
         private ContainerMemory monitor() {
-            return new ContainerMemory(new ContainerMemory.Sources(this::read, time::get));
+            return new ContainerMemory(new ContainerMemory.Sources(fileSystem, this::read, time::get));
         }
 
         private String read(Path path) throws IOException {

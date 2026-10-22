@@ -21,7 +21,9 @@ package art.arcane.volmlib.util.mantle.io;
 import java.io.Closeable;
 import java.io.File;
 import java.io.IOException;
+import java.io.InterruptedIOException;
 import java.nio.channels.FileChannel;
+import java.nio.file.AccessDeniedException;
 import java.nio.file.Files;
 import java.nio.file.OpenOption;
 import java.nio.file.Path;
@@ -39,6 +41,9 @@ import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.Semaphore;
 
 public class IOWorkerSupport implements Closeable {
+    private static final boolean WINDOWS = File.separatorChar == '\\';
+    private static final int MOVE_ATTEMPTS = 50;
+
     // No SYNC: it fsyncs every individual write (8KB buffers -> hundreds of fsyncs per plate).
     // Durability is provided by DelegateStream.Output.close(), which force(true)s the channel
     // once the whole plate has been written.
@@ -92,9 +97,11 @@ public class IOWorkerSupport implements Closeable {
             for (Holder holder : new ArrayList<>(gate.holders)) {
                 holder.closeLocked();
             }
-            Files.move(staged, target, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
-            try (FileChannel directory = FileChannel.open(target.toAbsolutePath().getParent(), StandardOpenOption.READ)) {
-                directory.force(true);
+            moveAtomically(staged, target);
+            if (!WINDOWS) {
+                try (FileChannel directory = FileChannel.open(target.toAbsolutePath().getParent(), StandardOpenOption.READ)) {
+                    directory.force(true);
+                }
             }
         } finally {
             gate.lock.release();
@@ -128,6 +135,28 @@ public class IOWorkerSupport implements Closeable {
     private static ChannelGate gateFor(Path filePath) {
         String gateKey = filePath.toAbsolutePath().normalize().toString();
         return GLOBAL_CHANNEL_GATES.computeIfAbsent(gateKey, unused -> new ChannelGate());
+    }
+
+    private static void moveAtomically(Path staged, Path target) throws IOException {
+        for (int attempt = 1; ; attempt++) {
+            try {
+                Files.move(staged, target, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
+                return;
+            } catch (AccessDeniedException error) {
+                if (!WINDOWS || attempt >= MOVE_ATTEMPTS) {
+                    throw error;
+                }
+                try {
+                    Thread.sleep(10L);
+                } catch (InterruptedException interrupted) {
+                    Thread.currentThread().interrupt();
+                    InterruptedIOException failure = new InterruptedIOException("Interrupted while replacing " + target);
+                    failure.initCause(interrupted);
+                    failure.addSuppressed(error);
+                    throw failure;
+                }
+            }
+        }
     }
 
     private Holder createHolder(String name) throws IOException {

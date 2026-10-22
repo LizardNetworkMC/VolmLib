@@ -151,18 +151,35 @@ public class IntegrationMetricSchemaTest {
     }
 
     @Test
-    public void exposesEchelonStorageSchema() {
+    public void exposesEchelonStorageAndSyncSchema() {
         Set<String> keys = IntegrationMetricSchema.echelonKeys();
 
-        assertEquals(2, keys.size());
+        assertEquals(Set.of(
+                IntegrationMetricSchema.ECHELON_STORAGE_DIRTY,
+                IntegrationMetricSchema.ECHELON_STORAGE_COLLECTIONS,
+                IntegrationMetricSchema.ECHELON_SYNC_LAG_MS
+        ), keys);
         assertTrue(IntegrationMetricSchema.allKeys().containsAll(keys));
         for (String key : keys) {
             IntegrationMetricDescriptor descriptor = IntegrationMetricSchema.descriptor(key);
             assertTrue(key.startsWith("echelon."));
             assertEquals("echelon", descriptor.tags().get("plugin"));
+        }
+        for (String key : Set.of(
+                IntegrationMetricSchema.ECHELON_STORAGE_DIRTY,
+                IntegrationMetricSchema.ECHELON_STORAGE_COLLECTIONS
+        )) {
+            IntegrationMetricDescriptor descriptor = IntegrationMetricSchema.descriptor(key);
             assertEquals("storage", descriptor.tags().get("domain"));
             assertEquals(IntegrationMetricType.INTEGER, descriptor.type());
         }
+
+        IntegrationMetricDescriptor syncLag = IntegrationMetricSchema.descriptor(
+                IntegrationMetricSchema.ECHELON_SYNC_LAG_MS
+        );
+        assertEquals("sync", syncLag.tags().get("domain"));
+        assertEquals(IntegrationMetricType.LONG, syncLag.type());
+        assertEquals("milliseconds", syncLag.unit());
     }
 
     @Test

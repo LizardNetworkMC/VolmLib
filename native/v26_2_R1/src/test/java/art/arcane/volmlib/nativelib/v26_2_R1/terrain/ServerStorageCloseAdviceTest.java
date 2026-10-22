@@ -11,12 +11,10 @@ import net.bytebuddy.dynamic.loading.ClassReloadingStrategy;
 import net.bytebuddy.implementation.FieldAccessor;
 import net.bytebuddy.matcher.ElementMatchers;
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.io.TempDir;
 
 import java.io.IOException;
 import java.lang.instrument.Instrumentation;
 import java.lang.reflect.Field;
-import java.nio.file.Path;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertNull;
@@ -24,9 +22,6 @@ import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 class ServerStorageCloseAdviceTest {
-    @TempDir
-    Path temporaryDirectory;
-
     @Test
     void signalsOnlyAfterStorageClosesSuccessfully() throws Exception {
         Instrumentation instrumentation = ByteBuddyAgent.install();
@@ -39,8 +34,7 @@ class ServerStorageCloseAdviceTest {
                 .withParameters(Object.class)
                 .intercept(FieldAccessor.ofField("closedStorage").setsArgumentAt(0))
                 .make();
-        ClassInjector.UsingInstrumentation.of(temporaryDirectory.toFile(),
-                        ClassInjector.UsingInstrumentation.Target.SYSTEM, instrumentation)
+        ClassInjector.UsingUnsafe.ofSystemLoader()
                 .injectRaw(Map.of(bridgeName, bridge.getBytes()));
         Field closedStorage = Class.forName(bridgeName, true, ClassLoader.getSystemClassLoader())
                 .getField("closedStorage");
