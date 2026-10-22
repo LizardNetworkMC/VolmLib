@@ -3,8 +3,13 @@ package art.arcane.volmlib.util.parallel;
 import art.arcane.volmlib.util.VolmLog;
 import art.arcane.volmlib.util.collection.KList;
 
+import java.io.IOException;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.Collection;
 import java.util.List;
+import java.util.Locale;
 import java.util.concurrent.AbstractExecutorService;
 import java.util.concurrent.Callable;
 import java.util.concurrent.CompletableFuture;
@@ -24,6 +29,9 @@ import java.util.function.LongSupplier;
 
 public class MultiBurstSupport implements ExecutorService {
     private static final ExecutorService SAME_THREAD = new SameThreadExecutorService();
+    private static final Path LINUX_PERFORMANCE_CPUS = Path.of("/sys/devices/cpu_core/cpus");
+    private static final int PERFORMANCE_PROCESSORS = performanceProcessors(
+            Runtime.getRuntime().availableProcessors(), detectPerformanceProcessors());
 
     private final AtomicLong last;
     private final String name;
@@ -61,6 +69,48 @@ public class MultiBurstSupport implements ExecutorService {
         this.warnHandler = warnHandler;
         this.shutdownTimeoutMillis = shutdownTimeoutMillis;
         this.last = new AtomicLong(millis.getAsLong());
+    }
+
+    public static int performanceProcessors() {
+        return PERFORMANCE_PROCESSORS;
+    }
+
+    static int performanceProcessors(int availableProcessors, int detectedPerformanceProcessors) {
+        int available = Math.max(1, availableProcessors);
+        if (detectedPerformanceProcessors < 1) {
+            return available;
+        }
+        return Math.min(available, detectedPerformanceProcessors);
+    }
+
+    static int countCpuList(String cpuList) {
+        if (cpuList == null || cpuList.isBlank()) {
+            return 0;
+        }
+        int count = 0;
+        for (String range : cpuList.trim().split(",")) {
+            String trimmed = range.trim();
+            if (trimmed.isEmpty()) {
+                continue;
+            }
+            int dash = trimmed.indexOf('-');
+            try {
+                if (dash < 0) {
+                    Integer.parseInt(trimmed);
+                    count++;
+                } else {
+                    int first = Integer.parseInt(trimmed.substring(0, dash).trim());
+                    int last = Integer.parseInt(trimmed.substring(dash + 1).trim());
+                    if (last < first) {
+                        return 0;
+                    }
+                    count += last - first + 1;
+                }
+            } catch (NumberFormatException malformed) {
+                return 0;
+            }
+        }
+        return count;
     }
 
     protected ExecutorService service() {
@@ -315,6 +365,42 @@ public class MultiBurstSupport implements ExecutorService {
         }
 
         return SAME_THREAD;
+    }
+
+    private static int detectPerformanceProcessors() {
+        String os = System.getProperty("os.name", "").toLowerCase(Locale.ROOT);
+        try {
+            if (os.contains("mac")) {
+                return macPerformanceProcessors();
+            }
+            if (os.contains("linux") && Files.isReadable(LINUX_PERFORMANCE_CPUS)) {
+                return countCpuList(Files.readString(LINUX_PERFORMANCE_CPUS));
+            }
+        } catch (IOException | RuntimeException failure) {
+            VolmLog.fine("MultiBurst", "Performance core detection failed; sizing pools from every available processor", failure);
+            return 0;
+        } catch (InterruptedException interruption) {
+            Thread.currentThread().interrupt();
+            return 0;
+        }
+        return 0;
+    }
+
+    private static int macPerformanceProcessors() throws IOException, InterruptedException {
+        Process process = new ProcessBuilder("sysctl", "-n", "hw.perflevel0.logicalcpu")
+                .redirectErrorStream(true)
+                .start();
+        try {
+            if (!process.waitFor(2L, TimeUnit.SECONDS) || process.exitValue() != 0) {
+                return 0;
+            }
+            String output = new String(process.getInputStream().readAllBytes(), StandardCharsets.US_ASCII).trim();
+            return output.isEmpty() ? 0 : Integer.parseInt(output);
+        } catch (NumberFormatException malformed) {
+            return 0;
+        } finally {
+            process.destroy();
+        }
     }
 
     private static final class SameThreadExecutorService extends AbstractExecutorService {

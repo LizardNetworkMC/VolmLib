@@ -17,6 +17,26 @@ import static org.junit.Assert.assertTrue;
 
 public class MultiBurstSupportTest {
     @Test
+    public void performanceProcessorsNeverExceedTheAvailableProcessors() {
+        assertEquals(12, MultiBurstSupport.performanceProcessors(16, 12));
+        assertEquals(8, MultiBurstSupport.performanceProcessors(8, 12));
+        assertEquals(16, MultiBurstSupport.performanceProcessors(16, 0));
+        assertEquals(1, MultiBurstSupport.performanceProcessors(0, 0));
+        int detected = MultiBurstSupport.performanceProcessors();
+        assertTrue(detected >= 1 && detected <= Runtime.getRuntime().availableProcessors());
+    }
+
+    @Test
+    public void cpuListsCountEveryListedProcessor() {
+        assertEquals(16, MultiBurstSupport.countCpuList("0-15\n"));
+        assertEquals(13, MultiBurstSupport.countCpuList("0-11,16"));
+        assertEquals(1, MultiBurstSupport.countCpuList("3"));
+        assertEquals(0, MultiBurstSupport.countCpuList(""));
+        assertEquals(0, MultiBurstSupport.countCpuList("4-2"));
+        assertEquals(0, MultiBurstSupport.countCpuList("a-b"));
+    }
+
+    @Test
     public void poolFactoryPreservesWorkerSettingsAndRunsAgainAfterReopen() throws Exception {
         List<Throwable> failures = new ArrayList<>();
         RecordingBurst burst = new RecordingBurst(failures);
