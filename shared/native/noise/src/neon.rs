@@ -1,7 +1,7 @@
 use std::arch::aarch64::*;
 
 use crate::kernels::{
-    val_coord2, val_coord3, Cellular, DISTANCE_EUCLIDEAN, DISTANCE_MANHATTAN, DISTANCE_NATURAL, F2, F3, G2, G3, G33, LONGERP_HERMITE, LONGERP_QULONGIC,
+    val_coord2, Cellular, DISTANCE_EUCLIDEAN, DISTANCE_MANHATTAN, DISTANCE_NATURAL, F2, F3, G2, G3, G33, LONGERP_HERMITE, LONGERP_QULONGIC,
     RETURN_CELL_VALUE, RETURN_DISTANCE, RETURN_DISTANCE2, RETURN_DISTANCE2_ADD, RETURN_DISTANCE2_DIV, RETURN_DISTANCE2_MUL,
     RETURN_DISTANCE2_SUB,
 };
@@ -29,9 +29,9 @@ const fn gradient_bytes<const N: usize>(values: &[i8]) -> [u8; N] {
 }
 
 #[derive(Clone, Copy)]
-pub struct Pair {
-    pub a: float64x2_t,
-    pub b: float64x2_t,
+struct Pair {
+    a: float64x2_t,
+    b: float64x2_t,
 }
 
 #[inline(always)]
@@ -277,7 +277,7 @@ fn falloff3(x: Pair, y: Pair, z: Pair) -> Pair {
 }
 
 #[inline(always)]
-pub fn simplex2(seed: i64, x: Pair, y: Pair) -> Pair {
+fn simplex2_lanes(seed: i64, x: Pair, y: Pair) -> Pair {
     unsafe {
         let gradient: Gradient2 = Gradient2::new();
         let s: uint32x4_t = vdupq_n_u32(seed as u32);
@@ -308,7 +308,7 @@ pub fn simplex2(seed: i64, x: Pair, y: Pair) -> Pair {
 }
 
 #[inline(always)]
-pub fn simplex3(seed: i64, x: Pair, y: Pair, z: Pair) -> Pair {
+fn simplex3_lanes(seed: i64, x: Pair, y: Pair, z: Pair) -> Pair {
     unsafe {
         let gradient: Gradient3 = Gradient3::new();
         let s: uint32x4_t = vdupq_n_u32(seed as u32);
@@ -388,7 +388,7 @@ fn interpolant<const MODE: i32>(t: Pair) -> Pair {
 }
 
 #[inline(always)]
-pub fn perlin2<const MODE: i32>(seed: i64, x: Pair, y: Pair) -> Pair {
+fn perlin2_lanes<const MODE: i32>(seed: i64, x: Pair, y: Pair) -> Pair {
     unsafe {
         let gradient: Gradient2 = Gradient2::new();
         let s: uint32x4_t = vdupq_n_u32(seed as u32);
@@ -411,7 +411,7 @@ pub fn perlin2<const MODE: i32>(seed: i64, x: Pair, y: Pair) -> Pair {
 }
 
 #[inline(always)]
-pub fn perlin3<const MODE: i32>(seed: i64, x: Pair, y: Pair, z: Pair) -> Pair {
+fn perlin3_lanes<const MODE: i32>(seed: i64, x: Pair, y: Pair, z: Pair) -> Pair {
     unsafe {
         let gradient: Gradient3 = Gradient3::new();
         let s: uint32x4_t = vdupq_n_u32(seed as u32);
@@ -458,12 +458,12 @@ pub fn perlin3<const MODE: i32>(seed: i64, x: Pair, y: Pair, z: Pair) -> Pair {
 }
 
 #[inline(always)]
-pub fn load(values: &[f64], offset: usize) -> Pair {
+fn load(values: &[f64], offset: usize) -> Pair {
     unsafe { Pair { a: vld1q_f64(values.as_ptr().add(offset)), b: vld1q_f64(values.as_ptr().add(offset + 2)) } }
 }
 
 #[inline(always)]
-pub fn store(values: &mut [f64], offset: usize, pair: Pair) {
+fn store(values: &mut [f64], offset: usize, pair: Pair) {
     unsafe {
         vst1q_f64(values.as_mut_ptr().add(offset), pair.a);
         vst1q_f64(values.as_mut_ptr().add(offset + 2), pair.b);
@@ -589,7 +589,7 @@ fn edge_result(result: i32, distance: Pair, distance2: Pair) -> Pair {
     }
 }
 
-pub fn cellular2(cellular: &Cellular, x: Pair, y: Pair) -> Option<Pair> {
+fn cellular2_lanes(cellular: &Cellular, x: Pair, y: Pair) -> Option<Pair> {
     if !finite(x) || !finite(y) {
         return None;
     }
@@ -600,7 +600,7 @@ pub fn cellular2(cellular: &Cellular, x: Pair, y: Pair) -> Option<Pair> {
     })
 }
 
-pub fn cellular3(cellular: &Cellular, x: Pair, y: Pair, z: Pair) -> Option<Pair> {
+fn cellular3_lanes(cellular: &Cellular, x: Pair, y: Pair, z: Pair) -> Option<Pair> {
     if !finite(x) || !finite(y) || !finite(z) {
         return None;
     }
@@ -681,12 +681,8 @@ fn cellular3_distance<const DISTANCE: i32>(cellular: &Cellular, x: Pair, y: Pair
         let xr: Cell = round_cell(x);
         let yr: Cell = round_cell(y);
         let zr: Cell = round_cell(z);
-        let single: bool = cellular.result == RETURN_CELL_VALUE || cellular.result == RETURN_DISTANCE;
         let mut distance: Pair = splat(999999.0);
         let mut distance2: Pair = splat(999999.0);
-        let mut xc: Cell = Cell { a: vdupq_n_s64(0), b: vdupq_n_s64(0) };
-        let mut yc: Cell = xc;
-        let mut zc: Cell = xc;
         for dx in -1i64..=1 {
             let xi: Cell = offset(xr, dx);
             let base_x: Pair = sub(widen(xi), x);
@@ -705,31 +701,10 @@ fn cellular3_distance<const DISTANCE: i32>(cellular: &Cellular, x: Pair, y: Pair
                         add(base_z, gather(&CELL_3D_Z, hash)),
                     );
                     let closer: Mask = lt(candidate, distance);
-                    if single {
-                        xc = choose_cell(closer, xi, xc);
-                        yc = choose_cell(closer, yi, yc);
-                        zc = choose_cell(closer, zi, zc);
-                    } else {
-                        distance2 = choose(closer, distance, choose(lt(candidate, distance2), candidate, distance2));
-                    }
+                    distance2 = choose(closer, distance, choose(lt(candidate, distance2), candidate, distance2));
                     distance = choose(closer, candidate, distance);
                 }
             }
-        }
-        if single {
-            if cellular.result == RETURN_DISTANCE {
-                return sub(distance, splat(1.0));
-            }
-            let xs: [i64; 4] = cell_lanes(xc);
-            let ys: [i64; 4] = cell_lanes(yc);
-            let zs: [i64; 4] = cell_lanes(zc);
-            let values: [f64; 4] = [
-                val_coord3(0, xs[0], ys[0], zs[0]),
-                val_coord3(0, xs[1], ys[1], zs[1]),
-                val_coord3(0, xs[2], ys[2], zs[2]),
-                val_coord3(0, xs[3], ys[3], zs[3]),
-            ];
-            return load(&values, 0);
         }
         let zero: Pair = splat(0.0);
         let boundary: Pair = sub(
@@ -758,4 +733,69 @@ fn cellular3_distance<const DISTANCE: i32>(cellular: &Cellular, x: Pair, y: Pair
         }
         load(&values, 0)
     }
+}
+
+pub fn simplex2(seed: i64, xs: &[f64], ys: &[f64], out: &mut [f64]) -> usize {
+    let quads: usize = out.len() / 4 * 4;
+    for start in (0..quads).step_by(4) {
+        store(out, start, simplex2_lanes(seed, load(xs, start), load(ys, start)));
+    }
+    quads
+}
+
+pub fn simplex3(seed: i64, xs: &[f64], ys: &[f64], zs: &[f64], out: &mut [f64]) -> usize {
+    let quads: usize = out.len() / 4 * 4;
+    for start in (0..quads).step_by(4) {
+        store(out, start, simplex3_lanes(seed, load(xs, start), load(ys, start), load(zs, start)));
+    }
+    quads
+}
+
+pub fn perlin2<const MODE: i32>(seed: i64, xs: &[f64], ys: &[f64], out: &mut [f64]) -> usize {
+    let quads: usize = out.len() / 4 * 4;
+    for start in (0..quads).step_by(4) {
+        store(out, start, perlin2_lanes::<MODE>(seed, load(xs, start), load(ys, start)));
+    }
+    quads
+}
+
+pub fn perlin3<const MODE: i32>(seed: i64, xs: &[f64], ys: &[f64], zs: &[f64], out: &mut [f64]) -> usize {
+    let quads: usize = out.len() / 4 * 4;
+    for start in (0..quads).step_by(4) {
+        store(out, start, perlin3_lanes::<MODE>(seed, load(xs, start), load(ys, start), load(zs, start)));
+    }
+    quads
+}
+
+pub fn cellular2(cellular: &Cellular, xs: &[f64], ys: &[f64], out: &mut [f64]) -> usize {
+    let quads: usize = out.len() / 4 * 4;
+    for start in (0..quads).step_by(4) {
+        match cellular2_lanes(cellular, load(xs, start), load(ys, start)) {
+            Some(values) => store(out, start, values),
+            None => {
+                for index in start..start + 4 {
+                    out[index] = cellular.sample2(xs[index], ys[index]);
+                }
+            }
+        }
+    }
+    quads
+}
+
+pub fn cellular3(cellular: &Cellular, xs: &[f64], ys: &[f64], zs: &[f64], out: &mut [f64]) -> usize {
+    if cellular.result == RETURN_CELL_VALUE || cellular.result == RETURN_DISTANCE {
+        return 0;
+    }
+    let quads: usize = out.len() / 4 * 4;
+    for start in (0..quads).step_by(4) {
+        match cellular3_lanes(cellular, load(xs, start), load(ys, start), load(zs, start)) {
+            Some(values) => store(out, start, values),
+            None => {
+                for index in start..start + 4 {
+                    out[index] = cellular.sample3(xs[index], ys[index], zs[index]);
+                }
+            }
+        }
+    }
+    quads
 }

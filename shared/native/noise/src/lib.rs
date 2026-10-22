@@ -6,5 +6,7 @@ mod gpu;
 mod kernels;
 #[cfg(target_arch = "aarch64")]
 mod neon;
+#[cfg(not(target_arch = "aarch64"))]
+mod portable;
 mod program;
 mod tables;

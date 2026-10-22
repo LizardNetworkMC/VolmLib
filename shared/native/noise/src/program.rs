@@ -1,5 +1,8 @@
 use crate::batch;
-use crate::kernels::{java_max, java_min, white2, white3, Cellular, FRACTAL_BILLOW, FRACTAL_FBM, LONGERP_LINEAR, LONGERP_QULONGIC};
+use crate::kernels::{
+    java_max, java_min, white2, white3, Cellular, DISTANCE_EUCLIDEAN, DISTANCE_NATURAL, FRACTAL_BILLOW, FRACTAL_FBM, FRACTAL_RIGID_MULTI,
+    LONGERP_LINEAR, LONGERP_QULONGIC, RETURN_CELL_VALUE, RETURN_DISTANCE2_DIV, RETURN_NOISE_LOOKUP,
+};
 
 pub const MAGIC: u32 = 0x564e_5052;
 pub const VERSION: u32 = 1;
@@ -146,7 +149,12 @@ impl<'a> Program<'a> {
             if node.kind < 0 || node.kind >= KIND_COUNT || node.octaves < 1 || node.octaves > 16 {
                 return false;
             }
-            if !(LONGERP_LINEAR..=LONGERP_QULONGIC).contains(&node.longerp) {
+            if !(LONGERP_LINEAR..=LONGERP_QULONGIC).contains(&node.longerp)
+                || !(FRACTAL_FBM..=FRACTAL_RIGID_MULTI).contains(&node.fractal_type)
+                || !(DISTANCE_EUCLIDEAN..=DISTANCE_NATURAL).contains(&node.cell_distance)
+                || !(RETURN_CELL_VALUE..=RETURN_DISTANCE2_DIV).contains(&node.cell_return)
+                || node.cell_return == RETURN_NOISE_LOOKUP
+            {
                 return false;
             }
         }

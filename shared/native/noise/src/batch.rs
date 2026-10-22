@@ -1,20 +1,14 @@
 use crate::kernels::{self, Cellular, LONGERP_HERMITE, LONGERP_LINEAR, LONGERP_QULONGIC};
 #[cfg(target_arch = "aarch64")]
-use crate::neon;
+use crate::neon as vector;
+#[cfg(not(target_arch = "aarch64"))]
+use crate::portable as vector;
 
 pub fn simplex2(seed: i64, xs: &[f64], ys: &[f64], out: &mut [f64]) {
     let length: usize = out.len();
     let xs: &[f64] = &xs[..length];
     let ys: &[f64] = &ys[..length];
-    let mut start: usize = 0;
-    #[cfg(target_arch = "aarch64")]
-    {
-        while start + 4 <= length {
-            neon::store(out, start, neon::simplex2(seed, neon::load(xs, start), neon::load(ys, start)));
-            start += 4;
-        }
-    }
-    for index in start..length {
+    for index in vector::simplex2(seed, xs, ys, out)..length {
         out[index] = kernels::simplex2(seed, xs[index], ys[index]);
     }
 }
@@ -24,15 +18,7 @@ pub fn simplex3(seed: i64, xs: &[f64], ys: &[f64], zs: &[f64], out: &mut [f64]) 
     let xs: &[f64] = &xs[..length];
     let ys: &[f64] = &ys[..length];
     let zs: &[f64] = &zs[..length];
-    let mut start: usize = 0;
-    #[cfg(target_arch = "aarch64")]
-    {
-        while start + 4 <= length {
-            neon::store(out, start, neon::simplex3(seed, neon::load(xs, start), neon::load(ys, start), neon::load(zs, start)));
-            start += 4;
-        }
-    }
-    for index in start..length {
+    for index in vector::simplex3(seed, xs, ys, zs, out)..length {
         out[index] = kernels::simplex3(seed, xs[index], ys[index], zs[index]);
     }
 }
@@ -57,15 +43,7 @@ fn perlin2_mode<const MODE: i32>(seed: i64, xs: &[f64], ys: &[f64], out: &mut [f
     let length: usize = out.len();
     let xs: &[f64] = &xs[..length];
     let ys: &[f64] = &ys[..length];
-    let mut start: usize = 0;
-    #[cfg(target_arch = "aarch64")]
-    {
-        while start + 4 <= length {
-            neon::store(out, start, neon::perlin2::<MODE>(seed, neon::load(xs, start), neon::load(ys, start)));
-            start += 4;
-        }
-    }
-    for index in start..length {
+    for index in vector::perlin2::<MODE>(seed, xs, ys, out)..length {
         out[index] = kernels::perlin2::<MODE>(seed, xs[index], ys[index]);
     }
 }
@@ -75,19 +53,7 @@ fn perlin3_mode<const MODE: i32>(seed: i64, xs: &[f64], ys: &[f64], zs: &[f64], 
     let xs: &[f64] = &xs[..length];
     let ys: &[f64] = &ys[..length];
     let zs: &[f64] = &zs[..length];
-    let mut start: usize = 0;
-    #[cfg(target_arch = "aarch64")]
-    {
-        while start + 4 <= length {
-            neon::store(
-                out,
-                start,
-                neon::perlin3::<MODE>(seed, neon::load(xs, start), neon::load(ys, start), neon::load(zs, start)),
-            );
-            start += 4;
-        }
-    }
-    for index in start..length {
+    for index in vector::perlin3::<MODE>(seed, xs, ys, zs, out)..length {
         out[index] = kernels::perlin3::<MODE>(seed, xs[index], ys[index], zs[index]);
     }
 }
@@ -96,22 +62,7 @@ pub fn cellular2(cellular: &Cellular, xs: &[f64], ys: &[f64], out: &mut [f64]) {
     let length: usize = out.len();
     let xs: &[f64] = &xs[..length];
     let ys: &[f64] = &ys[..length];
-    let mut start: usize = 0;
-    #[cfg(target_arch = "aarch64")]
-    {
-        while start + 4 <= length {
-            match neon::cellular2(cellular, neon::load(xs, start), neon::load(ys, start)) {
-                Some(values) => neon::store(out, start, values),
-                None => {
-                    for index in start..start + 4 {
-                        out[index] = cellular.sample2(xs[index], ys[index]);
-                    }
-                }
-            }
-            start += 4;
-        }
-    }
-    for index in start..length {
+    for index in vector::cellular2(cellular, xs, ys, out)..length {
         out[index] = cellular.sample2(xs[index], ys[index]);
     }
 }
@@ -121,22 +72,7 @@ pub fn cellular3(cellular: &Cellular, xs: &[f64], ys: &[f64], zs: &[f64], out: &
     let xs: &[f64] = &xs[..length];
     let ys: &[f64] = &ys[..length];
     let zs: &[f64] = &zs[..length];
-    let mut start: usize = 0;
-    #[cfg(target_arch = "aarch64")]
-    {
-        while start + 4 <= length {
-            match neon::cellular3(cellular, neon::load(xs, start), neon::load(ys, start), neon::load(zs, start)) {
-                Some(values) => neon::store(out, start, values),
-                None => {
-                    for index in start..start + 4 {
-                        out[index] = cellular.sample3(xs[index], ys[index], zs[index]);
-                    }
-                }
-            }
-            start += 4;
-        }
-    }
-    for index in start..length {
+    for index in vector::cellular3(cellular, xs, ys, zs, out)..length {
         out[index] = cellular.sample3(xs[index], ys[index], zs[index]);
     }
 }

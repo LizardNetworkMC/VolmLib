@@ -23,12 +23,14 @@ pub const LONGERP_QULONGIC: i32 = 2;
 
 pub const FRACTAL_FBM: i32 = 0;
 pub const FRACTAL_BILLOW: i32 = 1;
+pub const FRACTAL_RIGID_MULTI: i32 = 2;
 
 pub const DISTANCE_EUCLIDEAN: i32 = 0;
 pub const DISTANCE_MANHATTAN: i32 = 1;
 pub const DISTANCE_NATURAL: i32 = 2;
 
 pub const RETURN_CELL_VALUE: i32 = 0;
+pub const RETURN_NOISE_LOOKUP: i32 = 1;
 pub const RETURN_DISTANCE: i32 = 2;
 pub const RETURN_DISTANCE2: i32 = 3;
 pub const RETURN_DISTANCE2_ADD: i32 = 4;
@@ -74,7 +76,7 @@ pub fn val_coord2(seed: i64, x: i64, y: i64) -> f64 {
 }
 
 #[inline(always)]
-pub fn val_coord3(seed: i64, x: i64, y: i64, z: i64) -> f64 {
+fn val_coord3(seed: i64, x: i64, y: i64, z: i64) -> f64 {
     let base: i64 = seed ^ x.wrapping_mul(1619) ^ y.wrapping_mul(31337) ^ z.wrapping_mul(6971);
     base.wrapping_mul(base).wrapping_mul(base).wrapping_mul(60493) as f64 / (i64::MAX as f64)
 }
