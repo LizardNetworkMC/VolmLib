@@ -11,5 +11,5 @@ public interface NativeTerrainAccess extends NativeBiomeAccess {
 
     boolean applyChunkBlocks(Chunk chunk, BukkitTerrainBuffer data);
 
-    boolean applyChunkDataBlocks(ChunkGenerator.ChunkData chunkData, NativeBlockVolume data);
+    boolean applyChunkDataBlocks(ChunkGenerator.ChunkData chunkData, NativeSectionVolume data);
 }
