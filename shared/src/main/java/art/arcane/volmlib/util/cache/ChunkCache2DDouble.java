@@ -97,6 +97,9 @@ public class ChunkCache2DDouble {
         }
         // Another thread owns the slot. The resolver is pure, so computing the column here as
         // well costs one duplicate sample and never a wait; the owner publishes the shared copy.
+        if (CacheContention.COUNTING) {
+            CacheContention.duplicateComputation();
+        }
         return resolver.apply(x, z);
     }
 }
