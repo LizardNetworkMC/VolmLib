@@ -96,6 +96,10 @@ public class FractalBillowSimplexNoise implements NoiseGenerator, OctaveNoise {
         return NATIVE_SAMPLES.get();
     }
 
+    public FastNoiseDouble getFastNoise() {
+        return n;
+    }
+
     private static NativeBackend createNativeBackend() {
         if (!Boolean.parseBoolean(System.getProperty("volmlib.noise.nativeBillow", "true"))) {
             return new NativeBackend(null, "java-disabled");

@@ -47,4 +47,8 @@ public class WhiteNoise implements NoiseGenerator {
     public double noise(double x, double y, double z) {
         return (n.GetWhiteNoise(x, y, z) / 2D) + 0.5D;
     }
+
+    public FastNoiseDouble getFastNoise() {
+        return n;
+    }
 }

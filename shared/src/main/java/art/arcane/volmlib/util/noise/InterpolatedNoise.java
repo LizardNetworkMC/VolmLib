@@ -74,6 +74,18 @@ public class InterpolatedNoise implements NoiseGenerator, OctaveNoise {
         }
     }
 
+    public InterpolationMethod getMethod() {
+        return method;
+    }
+
+    public NoiseGenerator getGenerator() {
+        return generator;
+    }
+
+    public double getCoordinateScale() {
+        return coordinateScale;
+    }
+
     private LatticeMemo createMemo() {
         return latticeSamples ? new GridMemo() : new LatticeMemo();
     }
