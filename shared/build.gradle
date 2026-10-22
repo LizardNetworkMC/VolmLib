@@ -236,10 +236,12 @@ tasks.register('testNativeNoise', Exec) {
     commandLine('cargo', 'test', '--release', '--locked', '--lib', '--target-dir', new File(nativeNoiseTarget, 'test').absolutePath)
 }
 
-tasks.register('packageNativeNoise', Copy) {
+tasks.register('packageNativeNoise', Sync) {
     dependsOn(tasks.named('buildNativeNoise'))
-    from(nativeNoiseLibrary)
-    into(nativeNoiseResources.map { Directory directory -> directory.dir("art/arcane/volmlib/native/${nativeNoiseOs}-${nativeNoiseArch}") })
+    from(nativeNoiseLibrary) {
+        into("art/arcane/volmlib/native/${nativeNoiseOs}-${nativeNoiseArch}")
+    }
+    into(nativeNoiseResources)
 }
 
 tasks.named('jar').configure {
@@ -248,7 +250,6 @@ tasks.named('jar').configure {
 
 tasks.named('sourcesJar').configure {
     from(sourceSets.nativeNoise.allSource)
-    exclude('art/arcane/volmlib/native/**')
     from('native/noise') {
         include('Cargo.toml', 'Cargo.lock', 'src/**')
         into('rust/noise')
@@ -256,9 +257,14 @@ tasks.named('sourcesJar').configure {
 }
 
 if (includeNativeNoise) {
-    sourceSets.main.resources.srcDir(nativeNoiseResources)
-    tasks.named('processResources').configure { dependsOn(tasks.named('packageNativeNoise')) }
-    tasks.named('sourcesJar').configure { dependsOn(tasks.named('packageNativeNoise')) }
+    tasks.named('jar').configure {
+        dependsOn(tasks.named('packageNativeNoise'))
+        from(nativeNoiseResources)
+    }
+    tasks.withType(Test).configureEach {
+        dependsOn(tasks.named('packageNativeNoise'))
+        classpath += files(nativeNoiseResources)
+    }
     tasks.named('check').configure { dependsOn(tasks.named('testNativeNoise')) }
 }
 

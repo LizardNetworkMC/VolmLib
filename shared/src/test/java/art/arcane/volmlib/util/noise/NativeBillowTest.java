@@ -58,7 +58,7 @@ public class NativeBillowTest {
         if (expected.equals("java-library-not-packaged")) {
             List<String> retained = new ArrayList<>();
             for (String entry : classpath.split(File.pathSeparator)) {
-                if (!entry.endsWith("/resources/main")) {
+                if (!entry.endsWith("nativeNoiseResources")) {
                     retained.add(entry);
                 }
             }
