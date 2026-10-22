@@ -11,7 +11,7 @@ public final class NativeBillowProbe {
             throw new AssertionError("Expected " + expectedBackend + " got " + FractalBillowSimplexNoise.nativeBackendStatus());
         }
         System.setProperty("volmlib.noise.nativeBillow", Boolean.toString(!Boolean.getBoolean("volmlib.noise.nativeBillow")));
-        System.setProperty("volmlib.noise.nativeBillowLibrary", "changed-after-initialization");
+        System.setProperty("volmlib.native.library", "changed-after-initialization");
         System.setProperty("volmlib.noise.nativeBillowDiagnostics", Boolean.toString(!Boolean.getBoolean("volmlib.noise.nativeBillowDiagnostics")));
         long checks = 0;
         double[] coordinates = {0D, -0D, 1D, -1D, 100D, -100D, Math.nextDown(100D), Math.nextUp(-100D),

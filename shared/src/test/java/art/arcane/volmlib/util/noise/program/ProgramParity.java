@@ -7,7 +7,8 @@ import java.util.SplittableRandom;
 final class ProgramParity {
     static final String[] APIS = {
             "sample2D", "fill2D", "fill2D-scalar", "fillGrid2D", "fillGrid2D-scalar",
-            "sampleSigned3D", "fillColumn3D", "fillColumn3D-scalar", "fillLattice3D", "fillLattice3D-scalar"
+            "sampleSigned3D", "fillColumn3D", "fillColumn3D-scalar", "fillLattice3D", "fillLattice3D-scalar",
+            "fill2D-selected", "fillGrid2D-selected", "fillColumn3D-selected", "fillLattice3D-selected"
     };
     private static final double[] SPECIAL = {
             0D, -0D, 0.5D, -0.5D, 1.0E-9D, -1.0E-9D, 29_999_999.5D, -29_999_999.5D, 16D, -16D, 30_000_000D, -30_000_000D
@@ -78,6 +79,11 @@ final class ProgramParity {
         result.compare(1, expected, actual, points, xs, zs, null);
         NoiseBackends.scalar().fill2D(program, scratch, xs, zs, points, actual);
         result.compare(2, expected, actual, points, xs, zs, null);
+        boolean selected = program.backend() != NoiseBackends.java();
+        if (selected) {
+            program.fill2D(scratch, xs, zs, points, actual);
+            result.compare(10, expected, actual, points, xs, zs, null);
+        }
         for (int grid = 0; grid < grids; grid++) {
             int[] size = GRID_SIZES[grid % GRID_SIZES.length];
             int width = size[0];
@@ -101,6 +107,10 @@ final class ProgramParity {
             result.compare(3, gridExpected, gridActual, gridExpected.length, gridX, gridZ, null);
             NoiseBackends.scalar().fillGrid2D(program, scratch, x0, z0, step, width, depth, gridActual);
             result.compare(4, gridExpected, gridActual, gridExpected.length, gridX, gridZ, null);
+            if (selected) {
+                program.fillGrid2D(scratch, x0, z0, step, width, depth, gridActual);
+                result.compare(11, gridExpected, gridActual, gridExpected.length, gridX, gridZ, null);
+            }
         }
     }
 
@@ -121,6 +131,7 @@ final class ProgramParity {
             actual[index] = program.sampleSigned3D(xs[index], ys[index], zs[index]);
         }
         result.compare(5, expected, actual, points, xs, zs, ys);
+        boolean selected = program.backend() != NoiseBackends.java();
         for (int column = 0; column < columns; column++) {
             double x = coordinate(random);
             double z = coordinate(random);
@@ -142,6 +153,10 @@ final class ProgramParity {
             result.compare(6, columnExpected, columnActual, count, columnX, columnZ, columnY);
             NoiseBackends.scalar().fillColumn3D(program, scratch, x, z, y0, yStep, count, columnActual);
             result.compare(7, columnExpected, columnActual, count, columnX, columnZ, columnY);
+            if (selected) {
+                program.fillColumn3D(scratch, x, z, y0, yStep, count, columnActual);
+                result.compare(12, columnExpected, columnActual, count, columnX, columnZ, columnY);
+            }
         }
         for (int lattice = 0; lattice < lattices; lattice++) {
             int[] size = LATTICE_SIZES[lattice % LATTICE_SIZES.length];
@@ -175,6 +190,10 @@ final class ProgramParity {
             result.compare(8, latticeExpected, latticeActual, total, latticeX, latticeZ, latticeY);
             NoiseBackends.scalar().fillLattice3D(program, scratch, x0, y0, z0, stepX, stepY, stepZ, nx, ny, nz, latticeActual);
             result.compare(9, latticeExpected, latticeActual, total, latticeX, latticeZ, latticeY);
+            if (selected) {
+                program.fillLattice3D(scratch, x0, y0, z0, stepX, stepY, stepZ, nx, ny, nz, latticeActual);
+                result.compare(13, latticeExpected, latticeActual, total, latticeX, latticeZ, latticeY);
+            }
         }
     }
 
