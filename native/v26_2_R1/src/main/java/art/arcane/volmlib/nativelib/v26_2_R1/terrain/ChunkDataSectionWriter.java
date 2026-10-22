@@ -111,10 +111,11 @@ final class ChunkDataSectionWriter {
         scratch.beginSection();
         int[] ids = scratch.ids;
         int[] localIds = scratch.localByChunk;
+        int[] cellCounts = scratch.cellCounts;
         Arrays.fill(ids, 0, fromRow << 8, UNWRITTEN);
         Arrays.fill(ids, toRow << 8, SECTION_CELLS, UNWRITTEN);
         boolean written = false;
-        boolean unwritten = fromRow > 0 || toRow < 16;
+        int unwrittenCount = (fromRow + 16 - toRow) << 8;
         int lastChunkId = 0;
         int lastId = UNWRITTEN;
         for (int z = 0; z < 16; z++) {
@@ -124,7 +125,7 @@ final class ChunkDataSectionWriter {
                     int chunkId = cells[rowIndex | x] & 0xFFFF;
                     if (chunkId == 0) {
                         ids[rowIndex | x] = UNWRITTEN;
-                        unwritten = true;
+                        unwrittenCount++;
                         continue;
                     }
                     if (chunkId != lastChunkId) {
@@ -141,6 +142,7 @@ final class ChunkDataSectionWriter {
                         lastChunkId = chunkId;
                     }
                     ids[rowIndex | x] = lastId;
+                    cellCounts[lastId]++;
                     written = true;
                 }
             }
@@ -150,7 +152,11 @@ final class ChunkDataSectionWriter {
             return true;
         }
 
-        int airId = unwritten ? scratch.paletteId(AIR) : UNWRITTEN;
+        int airId = UNWRITTEN;
+        if (unwrittenCount > 0) {
+            airId = scratch.paletteId(AIR);
+            cellCounts[airId] += unwrittenCount;
+        }
         if (scratch.paletteSize > MAX_LOCAL_PALETTE || section.getStates().maybeHas(state -> state != AIR)) {
             writeCells(scratch, section, sectionBlockY);
             return true;
@@ -234,15 +240,6 @@ final class ChunkDataSectionWriter {
         int paletteSize = scratch.paletteSize;
         int[] ids = scratch.ids;
         int[] cellCounts = scratch.cellCounts;
-        int[] appearance = scratch.appearance;
-        Arrays.fill(cellCounts, 0, paletteSize, 0);
-        int distinct = 0;
-        for (int index = 0; index < SECTION_CELLS; index++) {
-            int id = ids[index] == UNWRITTEN ? airId : ids[index];
-            if (cellCounts[id]++ == 0) {
-                appearance[distinct++] = id;
-            }
-        }
 
         int nonEmpty = 0;
         int fluids = 0;
@@ -286,6 +283,17 @@ final class ChunkDataSectionWriter {
         if (tickingIds == 1) {
             addPositions(ids, tickingBlocks, tickingId);
             return;
+        }
+        int[] appearance = scratch.appearance;
+        boolean[] appeared = scratch.appeared;
+        Arrays.fill(appeared, 0, paletteSize, false);
+        int distinct = 0;
+        for (int index = 0; index < SECTION_CELLS && distinct < paletteSize; index++) {
+            int id = ids[index] == UNWRITTEN ? airId : ids[index];
+            if (!appeared[id]) {
+                appeared[id] = true;
+                appearance[distinct++] = id;
+            }
         }
         Int2ObjectOpenHashMap<BlockState> recountOrder = new Int2ObjectOpenHashMap<>(bits <= 6 ? 1 << bits : 64);
         for (int index = 0; index < distinct; index++) {
@@ -400,8 +408,9 @@ final class ChunkDataSectionWriter {
         private final BlockState[] palette = new BlockState[SECTION_CELLS + 1];
         private final Reference2IntOpenHashMap<BlockState> paletteIds = new Reference2IntOpenHashMap<>();
         private final LongArrayList blockEntityCells = new LongArrayList();
-        private final int[] cellCounts = new int[MAX_LOCAL_PALETTE + 1];
+        private final int[] cellCounts = new int[SECTION_CELLS + 1];
         private final int[] appearance = new int[MAX_LOCAL_PALETTE + 1];
+        private final boolean[] appeared = new boolean[MAX_LOCAL_PALETTE + 1];
         private static final NativeBlockState[] NO_STATES = new NativeBlockState[0];
 
         private NativeBlockState[] chunkPalette = NO_STATES;
@@ -465,6 +474,7 @@ final class ChunkDataSectionWriter {
                 id = paletteSize++;
                 paletteIds.put(state, id);
                 palette[id] = state;
+                cellCounts[id] = 0;
             }
             return id;
         }
