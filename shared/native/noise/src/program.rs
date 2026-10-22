@@ -670,12 +670,19 @@ fn kernel2(node: &Node, signed: bool, work: &mut Work, out: &mut [f64], length: 
         KIND_SIMPLEX | KIND_PERLIN => octave2(node, signed, work, out, length),
         KIND_BILLOW_SIMPLEX | KIND_FBM_SIMPLEX | KIND_RIGID_MULTI_SIMPLEX => fractal2(node, signed, work, out, length),
         KIND_CELLULAR | KIND_VASCULAR | KIND_GLOB => {
-            let u: &[f64] = &work.u[..length];
-            let v: &[f64] = &work.v[..length];
-            let cellular: Cellular = Cellular { seed, distance: node.cell_distance, result: node.cell_return };
+            let Work { u, v, a, b, n, .. } = work;
+            let u: &[f64] = &u[..length];
+            let v: &[f64] = &v[..length];
+            let xs: &mut [f64] = &mut a[..length];
+            let ys: &mut [f64] = &mut b[..length];
+            let raw: &mut [f64] = &mut n[..length];
             for index in 0..length {
-                let raw: f64 = cellular.sample2((u[index] + ox) * frequency, (v[index] + oz) * frequency);
-                out[index] = cellular_wrap(node.kind, signed, raw);
+                xs[index] = (u[index] + ox) * frequency;
+                ys[index] = (v[index] + oz) * frequency;
+            }
+            batch::cellular2(&Cellular { seed, distance: node.cell_distance, result: node.cell_return }, xs, ys, raw);
+            for index in 0..length {
+                out[index] = cellular_wrap(node.kind, signed, raw[index]);
             }
         }
         _ => {
@@ -698,13 +705,22 @@ fn kernel3(node: &Node, signed: bool, work: &mut Work, out: &mut [f64], length: 
         KIND_SIMPLEX | KIND_PERLIN => octave3(node, signed, work, out, length),
         KIND_BILLOW_SIMPLEX | KIND_FBM_SIMPLEX | KIND_RIGID_MULTI_SIMPLEX => fractal3(node, signed, work, out, length),
         KIND_CELLULAR | KIND_VASCULAR | KIND_GLOB => {
-            let u: &[f64] = &work.u[..length];
-            let v: &[f64] = &work.v[..length];
-            let w: &[f64] = &work.w[..length];
-            let cellular: Cellular = Cellular { seed, distance: node.cell_distance, result: node.cell_return };
+            let Work { u, v, w, a, b, c, n, .. } = work;
+            let u: &[f64] = &u[..length];
+            let v: &[f64] = &v[..length];
+            let w: &[f64] = &w[..length];
+            let xs: &mut [f64] = &mut a[..length];
+            let ys: &mut [f64] = &mut b[..length];
+            let zs: &mut [f64] = &mut c[..length];
+            let raw: &mut [f64] = &mut n[..length];
             for index in 0..length {
-                let raw: f64 = cellular.sample3((u[index] + ox) * frequency, v[index] * frequency, (w[index] + oz) * frequency);
-                out[index] = cellular_wrap(node.kind, signed, raw);
+                xs[index] = (u[index] + ox) * frequency;
+                ys[index] = v[index] * frequency;
+                zs[index] = (w[index] + oz) * frequency;
+            }
+            batch::cellular3(&Cellular { seed, distance: node.cell_distance, result: node.cell_return }, xs, ys, zs, raw);
+            for index in 0..length {
+                out[index] = cellular_wrap(node.kind, signed, raw[index]);
             }
         }
         _ => {

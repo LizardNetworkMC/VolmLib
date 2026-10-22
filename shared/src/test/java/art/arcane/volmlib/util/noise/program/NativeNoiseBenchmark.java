@@ -29,6 +29,7 @@ public final class NativeNoiseBenchmark {
         for (int warm = 0; warm < 3; warm++) {
             for (NoiseProgramBenchmark.Case benchmark : cases) {
                 measure(benchmark, warm, 1);
+                measureSmall(benchmark, warm, 1);
             }
         }
         System.out.printf("%-22s %-7s | %7s %7s %5s | %7s %7s %5s | %7s %7s %5s | %7s %7s %5s%n", "style", "backend",
@@ -40,7 +41,60 @@ public final class NativeNoiseBenchmark {
                     result[0], result[1], result[0] / result[1], result[2], result[3], result[2] / result[3],
                     result[4], result[5], result[4] / result[5], result[6], result[7], result[6] / result[7]);
         }
+        System.out.printf("%-22s | %7s %7s %5s | %7s %7s %5s%n", "small batches", "g4x4-j", "g4x4-n", "x", "c16-j", "c16-n", "x");
+        for (NoiseProgramBenchmark.Case benchmark : cases) {
+            double[] result = measureSmall(benchmark, 100, ROUNDS);
+            System.out.printf("%-22s | %7.1f %7.1f %5.2f | %7.1f %7.1f %5.2f%n", benchmark.name(),
+                    result[0], result[1], result[0] / result[1], result[2], result[3], result[2] / result[3]);
+        }
         System.out.println("ns per sample (j = Java batch backend, n = selected backend), median of " + ROUNDS + " rounds; sink=" + sink);
+    }
+
+    private static double[] measureSmall(NoiseProgramBenchmark.Case benchmark, int salt, int rounds) {
+        CNG cng = benchmark.factory().apply(9001L);
+        NoiseProgram planar = NoiseProgram.compile2D(cng);
+        NoiseProgram volume = NoiseProgram.compileSigned3D(cng);
+        NoiseBackend java = NoiseBackends.java();
+        NoiseScratch scratch = new NoiseScratch();
+        double[] out = new double[16];
+        double[][] samples = new double[4][rounds];
+        int calls = 4800;
+        double count = calls * 16D;
+        for (int round = 0; round < rounds; round++) {
+            double base = (salt * 31 + round) * 65536D;
+            double acc = 0D;
+            long t0 = System.nanoTime();
+            for (int call = 0; call < calls; call++) {
+                java.fillGrid2D(planar, scratch, base + (call % 60) * 4, -base + (call / 60) * 4, 4D, 4, 4, out);
+                acc += out[call & 15];
+            }
+            long t1 = System.nanoTime();
+            for (int call = 0; call < calls; call++) {
+                planar.fillGrid2D(scratch, base + (call % 60) * 4, -base + (call / 60) * 4, 4D, 4, 4, out);
+                acc += out[call & 15];
+            }
+            long t2 = System.nanoTime();
+            for (int call = 0; call < calls; call++) {
+                java.fillColumn3D(volume, scratch, base + (call % 60), -base + (call / 60), -32D, 4D, 16, out);
+                acc += out[call & 15];
+            }
+            long t3 = System.nanoTime();
+            for (int call = 0; call < calls; call++) {
+                volume.fillColumn3D(scratch, base + (call % 60), -base + (call / 60), -32D, 4D, 16, out);
+                acc += out[call & 15];
+            }
+            long t4 = System.nanoTime();
+            sink += acc;
+            samples[0][round] = (t1 - t0) / count;
+            samples[1][round] = (t2 - t1) / count;
+            samples[2][round] = (t3 - t2) / count;
+            samples[3][round] = (t4 - t3) / count;
+        }
+        double[] medians = new double[4];
+        for (int index = 0; index < 4; index++) {
+            medians[index] = median(samples[index]);
+        }
+        return medians;
     }
 
     private static String backendName(NoiseProgramBenchmark.Case benchmark) {

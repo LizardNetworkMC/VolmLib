@@ -28,7 +28,7 @@ final class NoiseBackendSelfTest {
             NoiseProgram planar = NoiseProgram.compile2D(cng);
             NoiseProgram volume = NoiseProgram.compileSigned3D(cng);
             if (!backend.supports(planar) || !backend.supports(volume)) {
-                return check.name() + " is not supported";
+                continue;
             }
             String failure = compare(backend, planar, volume, new SplittableRandom(seed));
             if (failure != null) {
@@ -112,6 +112,8 @@ final class NoiseBackendSelfTest {
         cases.add(new Case("longerp:LINEAR", seed -> perlin(seed, FastNoiseDouble.Longerp.Linear)));
         cases.add(new Case("fracture:WATER", seed -> style(new CNG(new RNG(seed), 1D, 1)
                 .fractureWith(new CNG(new RNG(seed).nextParallelRNG(1), NoiseType.FRACTAL_FBM_SIMPLEX, 1D, 9).scale(0.03), 9900), 1.5D, 1.8D)));
+        cases.add(new Case("fracture:WHITE", seed -> style(new CNG(new RNG(seed), NoiseType.SIMPLEX, 1D, 1)
+                .fractureWith(new CNG(new RNG(seed + 2L), NoiseType.WHITE, 1D, 1), 12), 1.5D, 1.2D)));
         cases.add(new Case("opacity", seed -> style(new CNG(new RNG(seed), NoiseType.SIMPLEX, 0.7D, 1)
                 .fractureWith(new CNG(new RNG(seed + 3L), NoiseType.PERLIN, 0.45D, 1), 60), 1.5D, 1.1D)));
         cases.add(new Case("post", seed -> style(new CNG(new RNG(seed), NoiseType.SIMPLEX, 1D, 1).up(0.25D).down(0.1D).patch(0.6D)

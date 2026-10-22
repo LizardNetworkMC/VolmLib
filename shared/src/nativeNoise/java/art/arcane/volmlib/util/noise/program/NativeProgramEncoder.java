@@ -33,11 +33,16 @@ final class NativeProgramEncoder {
         }
         int nodeCount = program.nodeCount;
         int[] kinds = new int[nodeCount];
+        boolean gradient = false;
         for (int node = 0; node < nodeCount; node++) {
             kinds[node] = nativeKind(program.nodeKernels[node]);
             if (kinds[node] < 0) {
                 return null;
             }
+            gradient |= kinds[node] != KIND_WHITE;
+        }
+        if (!gradient) {
+            return null;
         }
         int termCount = program.termCount;
         int childCount = 0;

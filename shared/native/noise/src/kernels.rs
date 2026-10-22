@@ -26,6 +26,7 @@ pub const FRACTAL_BILLOW: i32 = 1;
 
 pub const DISTANCE_EUCLIDEAN: i32 = 0;
 pub const DISTANCE_MANHATTAN: i32 = 1;
+pub const DISTANCE_NATURAL: i32 = 2;
 
 pub const RETURN_CELL_VALUE: i32 = 0;
 pub const RETURN_DISTANCE: i32 = 2;
@@ -67,13 +68,13 @@ fn low_hash3(seed: u32, x: u32, y: u32, z: u32) -> u32 {
 }
 
 #[inline(always)]
-fn val_coord2(seed: i64, x: i64, y: i64) -> f64 {
+pub fn val_coord2(seed: i64, x: i64, y: i64) -> f64 {
     let base: i64 = seed ^ x.wrapping_mul(1619) ^ y.wrapping_mul(31337);
     base.wrapping_mul(base).wrapping_mul(base).wrapping_mul(60493) as f64 / (i64::MAX as f64)
 }
 
 #[inline(always)]
-fn val_coord3(seed: i64, x: i64, y: i64, z: i64) -> f64 {
+pub fn val_coord3(seed: i64, x: i64, y: i64, z: i64) -> f64 {
     let base: i64 = seed ^ x.wrapping_mul(1619) ^ y.wrapping_mul(31337) ^ z.wrapping_mul(6971);
     base.wrapping_mul(base).wrapping_mul(base).wrapping_mul(60493) as f64 / (i64::MAX as f64)
 }
@@ -343,7 +344,7 @@ impl Cellular {
     }
 
     #[inline(always)]
-    fn edge_result(&self, distance: f64, distance2: f64) -> f64 {
+    pub fn edge_result(&self, distance: f64, distance2: f64) -> f64 {
         match self.result {
             RETURN_DISTANCE2 => distance2 - 1.0,
             RETURN_DISTANCE2_ADD => distance2 + distance - 1.0,
@@ -462,7 +463,7 @@ impl Cellular {
     }
 
     #[inline(never)]
-    fn refine2(&self, x: f64, y: f64, xr: i64, yr: i64, mut distance: f64, mut distance2: f64) -> f64 {
+    pub fn refine2(&self, x: f64, y: f64, xr: i64, yr: i64, mut distance: f64, mut distance2: f64) -> f64 {
         let seed: u32 = self.seed as u32;
         for dx in -2i64..=2 {
             let xi: i64 = xr.wrapping_add(dx);
@@ -536,7 +537,7 @@ impl Cellular {
 
     #[inline(never)]
     #[allow(clippy::too_many_arguments)]
-    fn refine3(&self, x: f64, y: f64, z: f64, xr: i64, yr: i64, zr: i64, mut distance: f64, mut distance2: f64) -> f64 {
+    pub fn refine3(&self, x: f64, y: f64, z: f64, xr: i64, yr: i64, zr: i64, mut distance: f64, mut distance2: f64) -> f64 {
         let seed: u32 = self.seed as u32;
         let radius: i64 = if self.distance == DISTANCE_MANHATTAN { 3 } else { 2 };
         for dx in -radius..=radius {

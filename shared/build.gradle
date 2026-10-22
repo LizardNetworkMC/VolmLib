@@ -230,6 +230,12 @@ tasks.register('buildNativeNoiseGpu', Exec) {
     commandLine('cargo', 'build', '--release', '--locked', '--features', 'gpu', '--target-dir', new File(nativeNoiseTarget, 'gpu').absolutePath)
 }
 
+tasks.register('testNativeNoise', Exec) {
+    workingDir(nativeNoiseCrate)
+    inputs.files(nativeNoiseSources)
+    commandLine('cargo', 'test', '--release', '--locked', '--lib', '--target-dir', new File(nativeNoiseTarget, 'test').absolutePath)
+}
+
 tasks.register('packageNativeNoise', Copy) {
     dependsOn(tasks.named('buildNativeNoise'))
     from(nativeNoiseLibrary)
@@ -253,6 +259,7 @@ if (includeNativeNoise) {
     sourceSets.main.resources.srcDir(nativeNoiseResources)
     tasks.named('processResources').configure { dependsOn(tasks.named('packageNativeNoise')) }
     tasks.named('sourcesJar').configure { dependsOn(tasks.named('packageNativeNoise')) }
+    tasks.named('check').configure { dependsOn(tasks.named('testNativeNoise')) }
 }
 
 tasks.withType(Test).configureEach {

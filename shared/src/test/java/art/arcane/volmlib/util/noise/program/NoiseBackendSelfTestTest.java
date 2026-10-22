@@ -23,15 +23,13 @@ public class NoiseBackendSelfTestTest {
     }
 
     @Test
-    public void backendsThatDeclineFailTheSelfTest() {
-        String failure = NoiseBackendSelfTest.run(new PerturbedBackend("") {
+    public void declinedProgramsAreNotVerified() {
+        assertNull(NoiseBackendSelfTest.run(new PerturbedBackend("fillLattice3D") {
             @Override
             public boolean supports(NoiseProgram program) {
                 return false;
             }
-        });
-        assertNotNull(failure);
-        assertTrue(failure, failure.endsWith("is not supported"));
+        }));
     }
 
     private static class PerturbedBackend implements NoiseBackend {

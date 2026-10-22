@@ -1,6 +1,11 @@
 use std::arch::aarch64::*;
 
-use crate::kernels::{F2, F3, G2, G3, G33, LONGERP_HERMITE, LONGERP_QULONGIC};
+use crate::kernels::{
+    val_coord2, val_coord3, Cellular, DISTANCE_EUCLIDEAN, DISTANCE_MANHATTAN, DISTANCE_NATURAL, F2, F3, G2, G3, G33, LONGERP_HERMITE, LONGERP_QULONGIC,
+    RETURN_CELL_VALUE, RETURN_DISTANCE, RETURN_DISTANCE2, RETURN_DISTANCE2_ADD, RETURN_DISTANCE2_DIV, RETURN_DISTANCE2_MUL,
+    RETURN_DISTANCE2_SUB,
+};
+use crate::tables::{CELL_2D_X, CELL_2D_Y, CELL_3D_X, CELL_3D_Y, CELL_3D_Z};
 
 const GRAD2_X: [u8; 16] = gradient_bytes::<16>(&[-1, 1, -1, 1, 0, -1, 0, 1]);
 const GRAD2_Y: [u8; 16] = gradient_bytes::<16>(&[-1, -1, 1, 1, -1, 0, 1, 0]);
@@ -462,5 +467,295 @@ pub fn store(values: &mut [f64], offset: usize, pair: Pair) {
     unsafe {
         vst1q_f64(values.as_mut_ptr().add(offset), pair.a);
         vst1q_f64(values.as_mut_ptr().add(offset + 2), pair.b);
+    }
+}
+
+#[inline(always)]
+fn round_cell(value: Pair) -> Cell {
+    unsafe {
+        let shifted: Pair = choose(ge(value, splat(0.0)), add(value, splat(0.5)), sub(value, splat(0.5)));
+        Cell { a: vcvtq_s64_f64(shifted.a), b: vcvtq_s64_f64(shifted.b) }
+    }
+}
+
+#[inline(always)]
+fn offset(cell: Cell, delta: i64) -> Cell {
+    unsafe { Cell { a: vaddq_s64(cell.a, vdupq_n_s64(delta)), b: vaddq_s64(cell.b, vdupq_n_s64(delta)) } }
+}
+
+#[inline(always)]
+fn choose_cell(mask: Mask, yes: Cell, no: Cell) -> Cell {
+    unsafe { Cell { a: vbslq_s64(mask.a, yes.a, no.a), b: vbslq_s64(mask.b, yes.b, no.b) } }
+}
+
+#[inline(always)]
+fn absolute(value: Pair) -> Pair {
+    unsafe { Pair { a: vabsq_f64(value.a), b: vabsq_f64(value.b) } }
+}
+
+#[inline(always)]
+fn divide(left: Pair, right: Pair) -> Pair {
+    unsafe { Pair { a: vdivq_f64(left.a, right.a), b: vdivq_f64(left.b, right.b) } }
+}
+
+#[inline(always)]
+fn java_max(a: Pair, b: Pair) -> Pair {
+    unsafe {
+        let ordered: Mask = Mask { a: vceqq_f64(a.a, a.a), b: vceqq_f64(a.b, a.b) };
+        choose(ordered, choose(ge(a, b), a, b), a)
+    }
+}
+
+#[inline(always)]
+fn gather(table: &[f64; 256], hash: uint32x4_t) -> Pair {
+    unsafe {
+        let index: uint32x4_t = vandq_u32(hash, vdupq_n_u32(255));
+        let low: [f64; 2] = [
+            *table.get_unchecked(vgetq_lane_u32::<0>(index) as usize),
+            *table.get_unchecked(vgetq_lane_u32::<1>(index) as usize),
+        ];
+        let high: [f64; 2] = [
+            *table.get_unchecked(vgetq_lane_u32::<2>(index) as usize),
+            *table.get_unchecked(vgetq_lane_u32::<3>(index) as usize),
+        ];
+        Pair { a: vld1q_f64(low.as_ptr()), b: vld1q_f64(high.as_ptr()) }
+    }
+}
+
+#[inline(always)]
+fn measure2<const DISTANCE: i32>(x: Pair, y: Pair) -> Pair {
+    match DISTANCE {
+        DISTANCE_EUCLIDEAN => add(mul(x, x), mul(y, y)),
+        DISTANCE_MANHATTAN => add(absolute(x), absolute(y)),
+        _ => add(add(absolute(x), absolute(y)), add(mul(x, x), mul(y, y))),
+    }
+}
+
+#[inline(always)]
+fn measure3<const DISTANCE: i32>(x: Pair, y: Pair, z: Pair) -> Pair {
+    match DISTANCE {
+        DISTANCE_EUCLIDEAN => add(add(mul(x, x), mul(y, y)), mul(z, z)),
+        DISTANCE_MANHATTAN => add(add(absolute(x), absolute(y)), absolute(z)),
+        _ => add(add(add(absolute(x), absolute(y)), absolute(z)), add(add(mul(x, x), mul(y, y)), mul(z, z))),
+    }
+}
+
+#[inline(always)]
+fn finite(value: Pair) -> bool {
+    unsafe {
+        let limit: float64x2_t = vdupq_n_f64(f64::MAX);
+        let a: uint64x2_t = vcleq_f64(vabsq_f64(value.a), limit);
+        let b: uint64x2_t = vcleq_f64(vabsq_f64(value.b), limit);
+        vminvq_u32(vreinterpretq_u32_u64(vandq_u64(a, b))) == u32::MAX
+    }
+}
+
+#[inline(always)]
+fn lanes(pair: Pair) -> [f64; 4] {
+    let mut values: [f64; 4] = [0.0; 4];
+    store(&mut values, 0, pair);
+    values
+}
+
+#[inline(always)]
+fn cell_lanes(cell: Cell) -> [i64; 4] {
+    unsafe {
+        [vgetq_lane_s64::<0>(cell.a), vgetq_lane_s64::<1>(cell.a), vgetq_lane_s64::<0>(cell.b), vgetq_lane_s64::<1>(cell.b)]
+    }
+}
+
+#[inline(always)]
+fn mask_lanes(mask: Mask) -> [bool; 4] {
+    unsafe {
+        [
+            vgetq_lane_u64::<0>(mask.a) != 0,
+            vgetq_lane_u64::<1>(mask.a) != 0,
+            vgetq_lane_u64::<0>(mask.b) != 0,
+            vgetq_lane_u64::<1>(mask.b) != 0,
+        ]
+    }
+}
+
+#[inline(always)]
+fn edge_result(result: i32, distance: Pair, distance2: Pair) -> Pair {
+    let one: Pair = splat(1.0);
+    match result {
+        RETURN_DISTANCE2 => sub(distance2, one),
+        RETURN_DISTANCE2_ADD => sub(add(distance2, distance), one),
+        RETURN_DISTANCE2_SUB => sub(sub(distance2, distance), one),
+        RETURN_DISTANCE2_MUL => sub(mul(distance2, distance), one),
+        RETURN_DISTANCE2_DIV => sub(divide(distance, distance2), one),
+        _ => splat(0.0),
+    }
+}
+
+pub fn cellular2(cellular: &Cellular, x: Pair, y: Pair) -> Option<Pair> {
+    if !finite(x) || !finite(y) {
+        return None;
+    }
+    Some(match cellular.distance {
+        DISTANCE_EUCLIDEAN => cellular2_distance::<DISTANCE_EUCLIDEAN>(cellular, x, y),
+        DISTANCE_MANHATTAN => cellular2_distance::<DISTANCE_MANHATTAN>(cellular, x, y),
+        _ => cellular2_distance::<DISTANCE_NATURAL>(cellular, x, y),
+    })
+}
+
+pub fn cellular3(cellular: &Cellular, x: Pair, y: Pair, z: Pair) -> Option<Pair> {
+    if !finite(x) || !finite(y) || !finite(z) {
+        return None;
+    }
+    Some(match cellular.distance {
+        DISTANCE_EUCLIDEAN => cellular3_distance::<DISTANCE_EUCLIDEAN>(cellular, x, y, z),
+        DISTANCE_MANHATTAN => cellular3_distance::<DISTANCE_MANHATTAN>(cellular, x, y, z),
+        _ => cellular3_distance::<DISTANCE_NATURAL>(cellular, x, y, z),
+    })
+}
+
+#[inline(always)]
+fn cellular2_distance<const DISTANCE: i32>(cellular: &Cellular, x: Pair, y: Pair) -> Pair {
+    unsafe {
+        let seed: uint32x4_t = vdupq_n_u32(cellular.seed as u32);
+        let xr: Cell = round_cell(x);
+        let yr: Cell = round_cell(y);
+        let single: bool = cellular.result == RETURN_CELL_VALUE || cellular.result == RETURN_DISTANCE;
+        let mut distance: Pair = splat(999999.0);
+        let mut distance2: Pair = splat(999999.0);
+        let mut xc: Cell = Cell { a: vdupq_n_s64(0), b: vdupq_n_s64(0) };
+        let mut yc: Cell = xc;
+        for dx in -1i64..=1 {
+            let xi: Cell = offset(xr, dx);
+            let base_x: Pair = sub(widen(xi), x);
+            let xu: uint32x4_t = low_bits(xi);
+            for dy in -1i64..=1 {
+                let yi: Cell = offset(yr, dy);
+                let base_y: Pair = sub(widen(yi), y);
+                let hash: uint32x4_t = hash2(seed, xu, low_bits(yi));
+                let candidate: Pair =
+                    measure2::<DISTANCE>(add(base_x, gather(&CELL_2D_X, hash)), add(base_y, gather(&CELL_2D_Y, hash)));
+                let closer: Mask = lt(candidate, distance);
+                if single {
+                    xc = choose_cell(closer, xi, xc);
+                    yc = choose_cell(closer, yi, yc);
+                } else {
+                    distance2 = choose(closer, distance, choose(lt(candidate, distance2), candidate, distance2));
+                }
+                distance = choose(closer, candidate, distance);
+            }
+        }
+        if single {
+            if cellular.result == RETURN_DISTANCE {
+                return sub(distance, splat(1.0));
+            }
+            let xs: [i64; 4] = cell_lanes(xc);
+            let ys: [i64; 4] = cell_lanes(yc);
+            let values: [f64; 4] = [val_coord2(0, xs[0], ys[0]), val_coord2(0, xs[1], ys[1]), val_coord2(0, xs[2], ys[2]), val_coord2(0, xs[3], ys[3])];
+            return load(&values, 0);
+        }
+        let zero: Pair = splat(0.0);
+        let boundary: Pair = sub(splat(1.55), java_max(absolute(sub(x, widen(xr))), absolute(sub(y, widen(yr)))));
+        let refine: [bool; 4] = mask_lanes(lt(measure3::<DISTANCE>(boundary, zero, zero), distance2));
+        let result: Pair = edge_result(cellular.result, distance, distance2);
+        if !(refine[0] | refine[1] | refine[2] | refine[3]) {
+            return result;
+        }
+        let mut values: [f64; 4] = lanes(result);
+        let xs: [f64; 4] = lanes(x);
+        let ys: [f64; 4] = lanes(y);
+        let xrs: [i64; 4] = cell_lanes(xr);
+        let yrs: [i64; 4] = cell_lanes(yr);
+        let distances: [f64; 4] = lanes(distance);
+        let distances2: [f64; 4] = lanes(distance2);
+        for lane in 0..4 {
+            if refine[lane] {
+                values[lane] = cellular.refine2(xs[lane], ys[lane], xrs[lane], yrs[lane], distances[lane], distances2[lane]);
+            }
+        }
+        load(&values, 0)
+    }
+}
+
+#[inline(always)]
+fn cellular3_distance<const DISTANCE: i32>(cellular: &Cellular, x: Pair, y: Pair, z: Pair) -> Pair {
+    unsafe {
+        let seed: uint32x4_t = vdupq_n_u32(cellular.seed as u32);
+        let xr: Cell = round_cell(x);
+        let yr: Cell = round_cell(y);
+        let zr: Cell = round_cell(z);
+        let single: bool = cellular.result == RETURN_CELL_VALUE || cellular.result == RETURN_DISTANCE;
+        let mut distance: Pair = splat(999999.0);
+        let mut distance2: Pair = splat(999999.0);
+        let mut xc: Cell = Cell { a: vdupq_n_s64(0), b: vdupq_n_s64(0) };
+        let mut yc: Cell = xc;
+        let mut zc: Cell = xc;
+        for dx in -1i64..=1 {
+            let xi: Cell = offset(xr, dx);
+            let base_x: Pair = sub(widen(xi), x);
+            let xu: uint32x4_t = low_bits(xi);
+            for dy in -1i64..=1 {
+                let yi: Cell = offset(yr, dy);
+                let base_y: Pair = sub(widen(yi), y);
+                let yu: uint32x4_t = low_bits(yi);
+                for dz in -1i64..=1 {
+                    let zi: Cell = offset(zr, dz);
+                    let base_z: Pair = sub(widen(zi), z);
+                    let hash: uint32x4_t = hash3(seed, xu, yu, low_bits(zi));
+                    let candidate: Pair = measure3::<DISTANCE>(
+                        add(base_x, gather(&CELL_3D_X, hash)),
+                        add(base_y, gather(&CELL_3D_Y, hash)),
+                        add(base_z, gather(&CELL_3D_Z, hash)),
+                    );
+                    let closer: Mask = lt(candidate, distance);
+                    if single {
+                        xc = choose_cell(closer, xi, xc);
+                        yc = choose_cell(closer, yi, yc);
+                        zc = choose_cell(closer, zi, zc);
+                    } else {
+                        distance2 = choose(closer, distance, choose(lt(candidate, distance2), candidate, distance2));
+                    }
+                    distance = choose(closer, candidate, distance);
+                }
+            }
+        }
+        if single {
+            if cellular.result == RETURN_DISTANCE {
+                return sub(distance, splat(1.0));
+            }
+            let xs: [i64; 4] = cell_lanes(xc);
+            let ys: [i64; 4] = cell_lanes(yc);
+            let zs: [i64; 4] = cell_lanes(zc);
+            let values: [f64; 4] = [
+                val_coord3(0, xs[0], ys[0], zs[0]),
+                val_coord3(0, xs[1], ys[1], zs[1]),
+                val_coord3(0, xs[2], ys[2], zs[2]),
+                val_coord3(0, xs[3], ys[3], zs[3]),
+            ];
+            return load(&values, 0);
+        }
+        let zero: Pair = splat(0.0);
+        let boundary: Pair = sub(
+            splat(1.55),
+            java_max(absolute(sub(x, widen(xr))), java_max(absolute(sub(y, widen(yr))), absolute(sub(z, widen(zr))))),
+        );
+        let refine: [bool; 4] = mask_lanes(lt(measure3::<DISTANCE>(boundary, zero, zero), distance2));
+        let result: Pair = edge_result(cellular.result, distance, distance2);
+        if !(refine[0] | refine[1] | refine[2] | refine[3]) {
+            return result;
+        }
+        let mut values: [f64; 4] = lanes(result);
+        let xs: [f64; 4] = lanes(x);
+        let ys: [f64; 4] = lanes(y);
+        let zs: [f64; 4] = lanes(z);
+        let xrs: [i64; 4] = cell_lanes(xr);
+        let yrs: [i64; 4] = cell_lanes(yr);
+        let zrs: [i64; 4] = cell_lanes(zr);
+        let distances: [f64; 4] = lanes(distance);
+        let distances2: [f64; 4] = lanes(distance2);
+        for lane in 0..4 {
+            if refine[lane] {
+                values[lane] =
+                    cellular.refine3(xs[lane], ys[lane], zs[lane], xrs[lane], yrs[lane], zrs[lane], distances[lane], distances2[lane]);
+            }
+        }
+        load(&values, 0)
     }
 }

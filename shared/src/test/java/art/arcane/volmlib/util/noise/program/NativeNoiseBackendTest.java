@@ -33,7 +33,7 @@ public class NativeNoiseBackendTest {
             }
         }
         assertTrue(String.join("\n", failures), failures.isEmpty());
-        assertTrue("native programs " + nativePrograms, nativePrograms >= 80);
+        assertTrue("native programs " + nativePrograms, nativePrograms >= 75);
     }
 
     @Test
