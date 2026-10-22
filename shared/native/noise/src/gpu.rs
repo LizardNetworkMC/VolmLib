@@ -58,28 +58,32 @@ fn eligible_adapter(name: &str, device_type: wgpu::DeviceType, preference: &str)
     device_type != wgpu::DeviceType::Cpu && name.to_lowercase().contains(preference)
 }
 
+pub(crate) fn candidate_adapters() -> Vec<wgpu::Adapter> {
+    let instance: wgpu::Instance =
+        wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle_from_env());
+    let mut adapters: Vec<wgpu::Adapter> =
+        pollster::block_on(instance.enumerate_adapters(wgpu::Backends::PRIMARY));
+    let preference: String = std::env::var("VOLMLIB_GPU_ADAPTER")
+        .unwrap_or_default()
+        .to_lowercase();
+    adapters.retain(|adapter| {
+        let info: wgpu::AdapterInfo = adapter.get_info();
+        eligible_adapter(&info.name, info.device_type, &preference)
+    });
+    adapters.sort_by_key(|adapter| match adapter.get_info().device_type {
+        wgpu::DeviceType::DiscreteGpu => 0,
+        wgpu::DeviceType::IntegratedGpu => 1,
+        _ => 2,
+    });
+    adapters
+}
+
 impl Context {
     fn create() -> Option<Self> {
         Self::create_shader(include_str!("billow.wgsl"))
     }
     fn create_shader(source: &str) -> Option<Self> {
-        let instance: wgpu::Instance =
-            wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle_from_env());
-        let mut adapters: Vec<wgpu::Adapter> =
-            pollster::block_on(instance.enumerate_adapters(wgpu::Backends::PRIMARY));
-        let preference: String = std::env::var("VOLMLIB_GPU_ADAPTER")
-            .unwrap_or_default()
-            .to_lowercase();
-        adapters.retain(|adapter| {
-            let info: wgpu::AdapterInfo = adapter.get_info();
-            eligible_adapter(&info.name, info.device_type, &preference)
-        });
-        adapters.sort_by_key(|adapter| match adapter.get_info().device_type {
-            wgpu::DeviceType::DiscreteGpu => 0,
-            wgpu::DeviceType::IntegratedGpu => 1,
-            _ => 2,
-        });
-        for adapter in adapters {
+        for adapter in candidate_adapters() {
             if !adapter
                 .get_downlevel_capabilities()
                 .flags
