@@ -3,14 +3,19 @@ package art.arcane.volmlib.util.parallel;
 import org.junit.Test;
 
 import java.util.List;
+import java.util.Set;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.ForkJoinPool;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicIntegerArray;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
@@ -95,6 +100,144 @@ public class BurstExecutorSupportTest {
             assertTrue(errors.get(0) instanceof ExecutionException);
             assertSame(failure, errors.get(0).getCause());
         } finally {
+            executor.shutdownNow();
+        }
+    }
+
+    @Test(timeout = 10000)
+    public void externalCompleteRunsQueuedTasksThePoolHasNotStarted() throws Exception {
+        ForkJoinPool pool = new ForkJoinPool(1);
+        CountDownLatch workerBusy = new CountDownLatch(1);
+        CountDownLatch releaseWorker = new CountDownLatch(1);
+        Set<Thread> threads = ConcurrentHashMap.newKeySet();
+        AtomicInteger completed = new AtomicInteger();
+        try {
+            pool.execute(() -> {
+                workerBusy.countDown();
+                awaitUninterruptibly(releaseWorker);
+            });
+            assertTrue(workerBusy.await(5L, TimeUnit.SECONDS));
+            Thread caller = Thread.currentThread();
+            BurstExecutorSupport burst = new BurstExecutorSupport(pool, 3);
+            for (int index = 0; index < 3; index++) {
+                burst.queue(() -> {
+                    threads.add(Thread.currentThread());
+                    completed.incrementAndGet();
+                });
+            }
+
+            burst.complete();
+
+            assertEquals(3, completed.get());
+            assertEquals(Set.of(caller), threads);
+            assertEquals(1L, releaseWorker.getCount());
+        } finally {
+            releaseWorker.countDown();
+            pool.shutdownNow();
+        }
+    }
+
+    @Test(timeout = 10000)
+    public void everyTaskRunsExactlyOnceWhenTheCallerAndThePoolShareTheBurst() {
+        ForkJoinPool pool = new ForkJoinPool(3);
+        int taskCount = 2000;
+        AtomicIntegerArray runs = new AtomicIntegerArray(taskCount);
+        try {
+            for (int round = 0; round < 20; round++) {
+                BurstExecutorSupport burst = new BurstExecutorSupport(pool, taskCount / 20);
+                for (int index = round * (taskCount / 20); index < (round + 1) * (taskCount / 20); index++) {
+                    int task = index;
+                    burst.queue(() -> runs.incrementAndGet(task));
+                }
+                burst.complete();
+            }
+        } finally {
+            pool.shutdownNow();
+        }
+        for (int index = 0; index < taskCount; index++) {
+            assertEquals(1, runs.get(index));
+        }
+    }
+
+    @Test(timeout = 10000)
+    public void callerRunTaskFailureIsReportedLikeAPoolFailure() throws Exception {
+        ForkJoinPool pool = new ForkJoinPool(1);
+        CountDownLatch workerBusy = new CountDownLatch(1);
+        CountDownLatch releaseWorker = new CountDownLatch(1);
+        List<Throwable> errors = new CopyOnWriteArrayList<>();
+        IllegalStateException failure = new IllegalStateException("caller-run failure");
+        try {
+            pool.execute(() -> {
+                workerBusy.countDown();
+                awaitUninterruptibly(releaseWorker);
+            });
+            assertTrue(workerBusy.await(5L, TimeUnit.SECONDS));
+            BurstExecutorSupport burst = new BurstExecutorSupport(pool, 1, errors::add);
+            burst.queue(() -> {
+                throw failure;
+            });
+
+            burst.complete();
+
+            assertEquals(1, errors.size());
+            assertTrue(errors.get(0) instanceof ExecutionException);
+            assertSame(failure, errors.get(0).getCause());
+        } finally {
+            releaseWorker.countDown();
+            pool.shutdownNow();
+        }
+    }
+
+    @Test(timeout = 10000)
+    public void callerRunTasksDoNotSeeTheCallersInterruptAndItIsRestored() throws Exception {
+        ForkJoinPool pool = new ForkJoinPool(1);
+        CountDownLatch workerBusy = new CountDownLatch(1);
+        CountDownLatch releaseWorker = new CountDownLatch(1);
+        AtomicBoolean taskSawInterrupt = new AtomicBoolean(true);
+        try {
+            pool.execute(() -> {
+                workerBusy.countDown();
+                awaitUninterruptibly(releaseWorker);
+            });
+            assertTrue(workerBusy.await(5L, TimeUnit.SECONDS));
+            CompletableFuture<Boolean> restored = new CompletableFuture<>();
+            Thread completion = new Thread(() -> {
+                BurstExecutorSupport burst = new BurstExecutorSupport(pool, 1);
+                burst.queue(() -> taskSawInterrupt.set(Thread.currentThread().isInterrupted()));
+                Thread.currentThread().interrupt();
+                burst.complete();
+                restored.complete(Thread.currentThread().isInterrupted());
+            }, "burst-help-interrupt-test");
+            completion.start();
+
+            assertTrue(restored.get(5L, TimeUnit.SECONDS));
+            assertFalse(taskSawInterrupt.get());
+        } finally {
+            releaseWorker.countDown();
+            pool.shutdownNow();
+        }
+    }
+
+    @Test(timeout = 10000)
+    public void plainExecutorTasksStayOnTheExecutor() throws Exception {
+        ExecutorService executor = Executors.newSingleThreadExecutor();
+        CountDownLatch release = new CountDownLatch(1);
+        Set<Thread> threads = ConcurrentHashMap.newKeySet();
+        try {
+            BurstExecutorSupport burst = new BurstExecutorSupport(executor, 3);
+            burst.queue(() -> awaitUninterruptibly(release));
+            for (int index = 0; index < 3; index++) {
+                burst.queue(() -> threads.add(Thread.currentThread()));
+            }
+            Thread caller = Thread.currentThread();
+            CompletableFuture.runAsync(release::countDown, CompletableFuture.delayedExecutor(100L, TimeUnit.MILLISECONDS));
+
+            burst.complete();
+
+            assertEquals(1, threads.size());
+            assertFalse(threads.contains(caller));
+        } finally {
+            release.countDown();
             executor.shutdownNow();
         }
     }
