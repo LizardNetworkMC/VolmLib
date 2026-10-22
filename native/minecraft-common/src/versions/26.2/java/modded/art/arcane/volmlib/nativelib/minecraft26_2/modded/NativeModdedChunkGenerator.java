@@ -478,27 +478,30 @@ public final class NativeModdedChunkGenerator<C, P extends StructureStartPlan, O
         int to = Math.min(dimMinY + height, chunkMaxY);
         int baseX = chunk.getPos().getMinBlockX();
         int baseZ = chunk.getPos().getMinBlockZ();
-        NativeSectionStateWriter writer = NativeSectionStateWriter.current();
-        BlockState[] cells = writer.cells();
-
-        for (int y = from; y < to; ) {
-            int sectionIndex = chunk.getSectionIndex(y);
-            LevelChunkSection section = chunk.getSection(sectionIndex);
-            int sectionMinY = chunk.getSectionYFromSectionIndex(sectionIndex) << 4;
-            int sectionEnd = Math.min(sectionMinY + 16, to);
-            if (collectSection(blocks, cells, dimMinY, sectionMinY, y, sectionEnd)) {
-                section.acquire();
-                try {
-                    if (writer.writeFresh(section)) {
-                        createBlockEntities(chunk, cells, baseX, sectionMinY, baseZ);
-                    } else {
-                        writeCells(chunk, section, cells, baseX, sectionMinY, baseZ);
+        NativeSectionStateWriter writer = NativeSectionStateWriter.borrow();
+        try {
+            BlockState[] cells = writer.cells();
+            for (int y = from; y < to; ) {
+                int sectionIndex = chunk.getSectionIndex(y);
+                LevelChunkSection section = chunk.getSection(sectionIndex);
+                int sectionMinY = chunk.getSectionYFromSectionIndex(sectionIndex) << 4;
+                int sectionEnd = Math.min(sectionMinY + 16, to);
+                if (collectSection(blocks, cells, dimMinY, sectionMinY, y, sectionEnd)) {
+                    section.acquire();
+                    try {
+                        if (writer.writeFresh(section)) {
+                            createBlockEntities(chunk, cells, baseX, sectionMinY, baseZ);
+                        } else {
+                            writeCells(chunk, section, cells, baseX, sectionMinY, baseZ);
+                        }
+                    } finally {
+                        section.release();
                     }
-                } finally {
-                    section.release();
                 }
+                y = sectionEnd;
             }
-            y = sectionEnd;
+        } finally {
+            writer.release();
         }
     }
 

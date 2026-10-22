@@ -27,6 +27,7 @@ import java.util.function.IntFunction;
 import static org.junit.Assert.assertArrayEquals;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertNotSame;
 import static org.junit.Assert.assertSame;
 import static org.junit.Assert.assertTrue;
 import static org.mockito.Mockito.mock;
@@ -85,11 +86,34 @@ public class NativeSectionStateWriterTest {
     public void sectionsHoldingAnythingButAirAreLeftToTheCaller() {
         LevelChunkSection section = section();
         section.setBlockState(1, 2, 3, Blocks.STONE.defaultBlockState(), false);
-        NativeSectionStateWriter writer = NativeSectionStateWriter.current();
-        Arrays.fill(writer.cells(), Blocks.DIRT.defaultBlockState());
+        NativeSectionStateWriter writer = NativeSectionStateWriter.borrow();
+        try {
+            Arrays.fill(writer.cells(), Blocks.DIRT.defaultBlockState());
 
-        assertFalse(writer.writeFresh(section));
-        assertSame(Blocks.AIR.defaultBlockState(), section.getBlockState(0, 0, 0));
+            assertFalse(writer.writeFresh(section));
+            assertSame(Blocks.AIR.defaultBlockState(), section.getBlockState(0, 0, 0));
+        } finally {
+            writer.release();
+        }
+    }
+
+    @Test
+    public void nestedBorrowsOnOneThreadGetSeparateCells() {
+        NativeSectionStateWriter outer = NativeSectionStateWriter.borrow();
+        try {
+            NativeSectionStateWriter nested = NativeSectionStateWriter.borrow();
+            try {
+                assertNotSame(outer, nested);
+                assertNotSame(outer.cells(), nested.cells());
+            } finally {
+                nested.release();
+            }
+        } finally {
+            outer.release();
+        }
+        NativeSectionStateWriter again = NativeSectionStateWriter.borrow();
+        again.release();
+        assertSame(outer, again);
     }
 
     private static void assertEquivalent(long seed, IntFunction<BlockState> palette, int paletteSize, double nullChance)
@@ -108,9 +132,14 @@ public class NativeSectionStateWriterTest {
             }
         }
         LevelChunkSection bulk = section();
-        NativeSectionStateWriter writer = NativeSectionStateWriter.current();
-        System.arraycopy(cells, 0, writer.cells(), 0, 4096);
-        boolean installed = writer.writeFresh(bulk);
+        NativeSectionStateWriter writer = NativeSectionStateWriter.borrow();
+        boolean installed;
+        try {
+            System.arraycopy(cells, 0, writer.cells(), 0, 4096);
+            installed = writer.writeFresh(bulk);
+        } finally {
+            writer.release();
+        }
         if (!installed) {
             for (int index = 0; index < 4096; index++) {
                 if (cells[index] != null) {

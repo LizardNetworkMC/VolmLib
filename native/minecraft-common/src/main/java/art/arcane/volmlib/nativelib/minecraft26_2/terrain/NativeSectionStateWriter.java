@@ -29,13 +29,23 @@ public final class NativeSectionStateWriter {
     private int valueCount;
     private int orderSize;
     private FriendlyByteBuf buffer;
+    private boolean borrowed;
 
     private NativeSectionStateWriter() {
         valueIds.defaultReturnValue(UNWRITTEN);
     }
 
-    public static NativeSectionStateWriter current() {
-        return CURRENT.get();
+    public static NativeSectionStateWriter borrow() {
+        NativeSectionStateWriter writer = CURRENT.get();
+        if (writer.borrowed) {
+            writer = new NativeSectionStateWriter();
+        }
+        writer.borrowed = true;
+        return writer;
+    }
+
+    public void release() {
+        borrowed = false;
     }
 
     public BlockState[] cells() {
