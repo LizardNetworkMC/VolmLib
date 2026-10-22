@@ -116,6 +116,7 @@ final class JavaBatchBackend implements NoiseBackend {
         int[] projectionXZ = projections[1];
         int[] projectionYZ = projections[2];
         int[] volumeTerms = program.volumeTerms;
+        boolean projected = program.pairTerms.length > 0;
         int total = nx * ny * nz;
         int x = 0;
         int y = 0;
@@ -126,9 +127,11 @@ final class JavaBatchBackend implements NoiseBackend {
                 coordinateX[index] = axisX[x];
                 coordinateY[index] = axisY[y];
                 coordinateZ[index] = axisZ[z];
-                projectionXY[index] = y * nx + x;
-                projectionXZ[index] = z * nx + x;
-                projectionYZ[index] = z * ny + y;
+                if (projected) {
+                    projectionXY[index] = y * nx + x;
+                    projectionXZ[index] = z * nx + x;
+                    projectionYZ[index] = z * ny + y;
+                }
                 if (++x == nx) {
                     x = 0;
                     if (++z == nz) {
