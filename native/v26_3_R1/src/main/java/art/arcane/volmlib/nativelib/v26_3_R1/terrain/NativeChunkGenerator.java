@@ -10,7 +10,6 @@ import art.arcane.volmlib.nativelib.terrain.NativeGenerationScope;
 import art.arcane.volmlib.nativelib.terrain.NativeSpawnSelection;
 import art.arcane.volmlib.nativelib.terrain.structure.StructureStartPlan;
 import art.arcane.volmlib.nativelib.terrain.structure.StructureOwnershipRecordView;
-import java.lang.reflect.InvocationTargetException;
 import art.arcane.volmlib.nativelib.v26_3_R1.terrain.NativeBukkitStructureStage;
 import art.arcane.volmlib.nativelib.v26_3_R1.terrain.NativeStructureStateLifecycle;
 import art.arcane.volmlib.nativelib.v26_3_R1.terrain.NativeTerrainPipeline;
@@ -122,12 +121,10 @@ import org.spigotmc.SpigotWorldConfig;
 import javax.annotation.Nullable;
 import java.lang.ref.WeakReference;
 import java.lang.reflect.Field;
-import java.lang.reflect.Method;
 import java.lang.reflect.ParameterizedType;
 import java.lang.reflect.Type;
 import java.io.IOException;
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -149,7 +146,11 @@ public class NativeChunkGenerator<C, D, P extends StructureStartPlan, O extends 
     private static final boolean PAPER_STRUCTURE_LOCATE_EVENT = supportsStructureLocateEvent(
             NativeChunkGenerator.class.getClassLoader());
     private static final Field BIOME_SOURCE;
-    private static final Method SET_HEIGHT;
+    private static final List<Heightmap.Types> FINAL_HEIGHTMAP_ORDER = List.of(
+            Heightmap.Types.OCEAN_FLOOR,
+            Heightmap.Types.WORLD_SURFACE,
+            Heightmap.Types.MOTION_BLOCKING,
+            Heightmap.Types.MOTION_BLOCKING_NO_LEAVES);
     private final ChunkGenerator delegate;
     private final NativeBukkitGeneratorContext<C, D, P, O, R> context;
     private final NativeBiomeSourceImpl customBiomeSource;
@@ -513,30 +514,20 @@ public class NativeChunkGenerator<C, D, P extends StructureStartPlan, O extends 
                      chunkPos.getMinBlockX(), chunkPos.getMinBlockZ(), "bukkit_nms_heightmaps");
              NativeGenerationLease lease = context.acquireLease("bukkit_nms_heightmaps");
              NativeGenerationScope ignored = context.openContext(lease)) {
-            SectionPos sectionPos = SectionPos.of(chunkAccess.getPos(), level.getMinSectionY());
-            BlockPos blockPos = sectionPos.origin();
-
             terrainPipeline.primeHeightmaps(chunkAccess);
             if (context.usesFlatTerrain()) {
                 return;
             }
 
-            Heightmap motion = chunkAccess.getOrCreateHeightmapUnprimed(Heightmap.Types.MOTION_BLOCKING);
-            Heightmap motionNoLeaves = chunkAccess.getOrCreateHeightmapUnprimed(Heightmap.Types.MOTION_BLOCKING_NO_LEAVES);
+            int baseX = chunkPos.getMinBlockX();
+            int baseZ = chunkPos.getMinBlockZ();
             int minHeight = context.minimumY();
-
-            for (int x = 0; x < 16; x++) {
-                for (int z = 0; z < 16; z++) {
-                    int wX = x + blockPos.getX();
-                    int wZ = z + blockPos.getZ();
-
-                    int terrainTop = context.terrainHeight(wX, wZ, false) + minHeight + 1;
-                    setHeight(motion, x, z, terrainTop);
-                    setHeight(motionNoLeaves, x, z, terrainTop);
-                }
-            }
-
-            Heightmap.primeHeightmaps(chunkAccess, ChunkStatus.FINAL_HEIGHTMAPS);
+            IntBinaryOperator terrainTop = (x, z) -> context.terrainHeight(baseX + x, baseZ + z, false) + minHeight + 1;
+            int[][] heights = SectionHeightmaps.scan(chunkAccess, FINAL_HEIGHTMAP_ORDER);
+            SectionHeightmaps.write(chunkAccess, Heightmap.Types.OCEAN_FLOOR, heights[0], null);
+            SectionHeightmaps.write(chunkAccess, Heightmap.Types.WORLD_SURFACE, heights[1], null);
+            SectionHeightmaps.write(chunkAccess, Heightmap.Types.MOTION_BLOCKING, heights[2], terrainTop);
+            SectionHeightmaps.write(chunkAccess, Heightmap.Types.MOTION_BLOCKING_NO_LEAVES, heights[3], terrainTop);
         }
     }
 
@@ -681,24 +672,9 @@ public class NativeChunkGenerator<C, D, P extends StructureStartPlan, O extends 
                     + biomeSources.size() + " " + biomeSources.stream().map(Field::getName).toList());
         Field biomeSource = biomeSources.getFirst();
 
-        List<Method> setHeights = new ArrayList<>(1);
-        for (Method method : Heightmap.class.getDeclaredMethods()) {
-            Class<?>[] types = method.getParameterTypes();
-            if (!method.getName().equals("setHeight")
-                    || !Arrays.equals(types, new Class<?>[]{int.class, int.class, int.class})
-                    || !method.getReturnType().equals(void.class))
-                continue;
-            setHeights.add(method);
-        }
-        if (setHeights.size() != 1)
-            throw new IllegalStateException("Expected exactly one Heightmap.setHeight(int,int,int) method, found "
-                    + setHeights.size());
-        Method setHeight = setHeights.getFirst();
 
         biomeSource.setAccessible(true);
         BIOME_SOURCE = biomeSource;
-        setHeight.setAccessible(true);
-        SET_HEIGHT = setHeight;
     }
 
     private static ChunkGenerator edit(ChunkGenerator generator, BiomeSource source) {
@@ -719,14 +695,6 @@ public class NativeChunkGenerator<C, D, P extends StructureStartPlan, O extends 
     private static BiomeRuntime createBiomeRuntime(NativeBukkitGeneratorContext<?, ?, ?, ?, ?> context) {
         NativeBiomeSourcePolicy<Holder<Biome>> policy = context.biomes(new NativeBiomeRegistryImpl());
         return new BiomeRuntime(new NativeBiomeSourceImpl(policy), policy);
-    }
-
-    private void setHeight(Heightmap heightmap, int x, int z, int height) {
-        try {
-            SET_HEIGHT.invoke(heightmap, x, z, height);
-        } catch (InvocationTargetException | IllegalAccessException failure) {
-            context.failed("Native heightmap publication failed", failure);
-        }
     }
 
     public record Configuration<C, D, P extends StructureStartPlan, O extends StructureOwnershipRecordView<O>, R extends NativeGenerationRoute>(

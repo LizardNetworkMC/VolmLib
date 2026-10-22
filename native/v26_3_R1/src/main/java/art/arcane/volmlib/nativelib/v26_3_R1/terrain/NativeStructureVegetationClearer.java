@@ -61,6 +61,8 @@ public final class NativeStructureVegetationClearer {
         LevelChunkSection[] sections = chunk.getSections();
         int chunkMinX = chunk.getPos().getMinBlockX();
         int chunkMinZ = chunk.getPos().getMinBlockZ();
+        BlockState lastState = null;
+        boolean lastTree = false;
         for (int sectionIndex = 0; sectionIndex < sections.length; sectionIndex++) {
             LevelChunkSection section = sections[sectionIndex];
             int sectionMinY = chunk.getSectionYFromSectionIndex(sectionIndex) << 4;
@@ -76,7 +78,12 @@ public final class NativeStructureVegetationClearer {
                     int localZ = z - chunkMinZ;
                     for (int x = area.minX(); x <= area.maxX(); x++) {
                         int localX = x - chunkMinX;
-                        if (!isTreeBlock(section.getBlockState(localX, localY, localZ))) {
+                        BlockState state = section.getBlockState(localX, localY, localZ);
+                        if (state != lastState) {
+                            lastTree = isTreeBlock(state);
+                            lastState = state;
+                        }
+                        if (!lastTree) {
                             continue;
                         }
                         int column = (z - area.minZ()) * width + x - area.minX();

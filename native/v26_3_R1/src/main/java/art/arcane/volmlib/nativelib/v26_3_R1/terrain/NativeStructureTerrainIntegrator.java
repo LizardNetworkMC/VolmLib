@@ -1048,6 +1048,8 @@ public final class NativeStructureTerrainIntegrator {
             BlockState[][] statesByLayer = new BlockState[height][];
             int sampledCells = 0;
             BlockPos.MutableBlockPos position = new BlockPos.MutableBlockPos();
+            BlockState lastState = null;
+            BlockState lastSource = null;
             for (int layer = requiredLayers.nextSetBit(0);
                  layer >= 0; layer = requiredLayers.nextSetBit(layer + 1)) {
                 if (layer >= height) {
@@ -1061,8 +1063,12 @@ public final class NativeStructureTerrainIntegrator {
                 for (int z = area.minZ(); z <= area.maxZ(); z++) {
                     for (int x = area.minX(); x <= area.maxX(); x++) {
                         int index = (z - area.minZ()) * width + x - area.minX();
-                        states[index] = sourceTerrainBlock(
-                                world.getBlockState(position.set(x, y, z)));
+                        BlockState state = world.getBlockState(position.set(x, y, z));
+                        if (state != lastState) {
+                            lastSource = sourceTerrainBlock(state);
+                            lastState = state;
+                        }
+                        states[index] = lastSource;
                     }
                 }
             }

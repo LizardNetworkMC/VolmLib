@@ -5,7 +5,7 @@ import art.arcane.volmlib.nativelib.terrain.NativeGenerationRoute;
 import art.arcane.volmlib.nativelib.terrain.NativeGenerationScope;
 import art.arcane.volmlib.nativelib.terrain.NativeTerrainPipelinePolicy;
 import art.arcane.volmlib.nativelib.terrain.NativeBiomeSourcePolicy;
-import net.minecraft.core.BlockPos;
+import art.arcane.volmlib.nativelib.terrain.NativeBlockPositionPredicate;
 import net.minecraft.core.Holder;
 import net.minecraft.server.level.WorldGenRegion;
 import net.minecraft.world.level.ChunkPos;
@@ -15,6 +15,7 @@ import net.minecraft.world.level.biome.BiomeManager;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.chunk.ChunkAccess;
 import net.minecraft.world.level.chunk.ChunkGenerator;
+import net.minecraft.world.level.chunk.LevelChunkSection;
 import net.minecraft.world.level.levelgen.Heightmap;
 import net.minecraft.world.level.levelgen.RandomState;
 import net.minecraft.world.level.levelgen.blending.Blender;
@@ -264,11 +265,7 @@ public final class NativeTerrainPipeline<R extends NativeGenerationRoute> {
             return;
         }
         try {
-            BlockPos.MutableBlockPos position = new BlockPos.MutableBlockPos();
-            route.claimGeneratedSemantics((x, y, z) -> {
-                BlockState state = chunk.getBlockState(position.set(x, minimumY + y, z));
-                return state.isAir() || state.liquid();
-            });
+            route.claimGeneratedSemantics(new CaveSpace(chunk, minimumY));
         } catch (IOException failure) {
             throw new IllegalStateException("Could not durably claim generated chunk semantics.", failure);
         }
@@ -276,6 +273,33 @@ public final class NativeTerrainPipeline<R extends NativeGenerationRoute> {
 
     private static NativeGenerationScope openHistoryRuntimeScope(NativeGenerationRoute route) {
         return route == null ? null : route.openRuntimeScope();
+    }
+
+    private static final class CaveSpace implements NativeBlockPositionPredicate {
+        private final ChunkAccess chunk;
+        private final int minimumY;
+        private int sectionIndex = Integer.MIN_VALUE;
+        private LevelChunkSection section;
+
+        private CaveSpace(ChunkAccess chunk, int minimumY) {
+            this.chunk = chunk;
+            this.minimumY = minimumY;
+        }
+
+        @Override
+        public boolean test(int x, int y, int z) {
+            int blockY = minimumY + y;
+            int index = chunk.getSectionIndex(blockY);
+            if (index != sectionIndex) {
+                sectionIndex = index;
+                section = index >= 0 && index < chunk.getSectionsCount() ? chunk.getSection(index) : null;
+            }
+            if (section == null) {
+                return true;
+            }
+            BlockState state = section.getBlockState(x & 15, blockY & 15, z & 15);
+            return state.isAir() || state.liquid();
+        }
     }
 
     public record Configuration<R extends NativeGenerationRoute>(
