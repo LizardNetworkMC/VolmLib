@@ -65,6 +65,18 @@ final class JavaScalarBackend implements NoiseBackend {
         }
     }
 
+    @Override
+    public void fillPoints3D(NoiseProgram program, NoiseScratch scratch, double[] xs, double[] ys, double[] zs, int count, double[] out) {
+        double[] values = scratch.scalarValues(program.termCount);
+        double[] coordinates = scratch.scalarCoordinates;
+        for (int index = 0; index < count; index++) {
+            coordinates[0] = xs[index];
+            coordinates[1] = ys[index];
+            coordinates[2] = zs[index];
+            out[index] = evaluate(program, values, coordinates);
+        }
+    }
+
     static double evaluate(NoiseProgram program, double[] values, double[] coordinates) {
         int count = program.termCount;
         for (int term = 0; term < count; term++) {

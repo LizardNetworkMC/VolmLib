@@ -8,7 +8,8 @@ final class ProgramParity {
     static final String[] APIS = {
             "sample2D", "fill2D", "fill2D-scalar", "fillGrid2D", "fillGrid2D-scalar",
             "sampleSigned3D", "fillColumn3D", "fillColumn3D-scalar", "fillLattice3D", "fillLattice3D-scalar",
-            "fill2D-selected", "fillGrid2D-selected", "fillColumn3D-selected", "fillLattice3D-selected"
+            "fill2D-selected", "fillGrid2D-selected", "fillColumn3D-selected", "fillLattice3D-selected",
+            "fillPoints3D", "fillPoints3D-scalar", "fillPoints3D-selected"
     };
     private static final double[] SPECIAL = {
             0D, -0D, 0.5D, -0.5D, 1.0E-9D, -1.0E-9D, 29_999_999.5D, -29_999_999.5D, 16D, -16D, 30_000_000D, -30_000_000D
@@ -16,6 +17,7 @@ final class ProgramParity {
     private static final double[] STEPS = {1D, 0.25D, 4D, 3.7D, 2D, 0.5D};
     private static final int[][] GRID_SIZES = {{16, 16}, {7, 13}, {33, 5}, {1, 1}, {64, 3}};
     private static final int[][] LATTICE_SIZES = {{1, 1, 1}, {4, 9, 4}, {16, 24, 16}, {9, 40, 9}, {3, 1, 7}, {5, 300, 1}};
+    private static final int[] POINT_BATCHES = {1, 2, 3, 7, 64, 255, 256, 257, 513, 1100};
 
     private ProgramParity() {
     }
@@ -132,6 +134,7 @@ final class ProgramParity {
         }
         result.compare(5, expected, actual, points, xs, zs, ys);
         boolean selected = program.backend() != NoiseBackends.java();
+        checkPoints(result, program, scratch, xs, ys, zs, expected, points, selected);
         for (int column = 0; column < columns; column++) {
             double x = coordinate(random);
             double z = coordinate(random);
@@ -194,6 +197,27 @@ final class ProgramParity {
                 program.fillLattice3D(scratch, x0, y0, z0, stepX, stepY, stepZ, nx, ny, nz, latticeActual);
                 result.compare(13, latticeExpected, latticeActual, total, latticeX, latticeZ, latticeY);
             }
+        }
+    }
+
+    private static void checkPoints(Result result, NoiseProgram program, NoiseScratch scratch, double[] xs, double[] ys, double[] zs,
+                                    double[] expected, int points, boolean selected) {
+        double[] actual = new double[points];
+        NoiseBackends.java().fillPoints3D(program, scratch, xs, ys, zs, points, actual);
+        result.compare(14, expected, actual, points, xs, zs, ys);
+        NoiseBackends.scalar().fillPoints3D(program, scratch, xs, ys, zs, points, actual);
+        result.compare(15, expected, actual, points, xs, zs, ys);
+        if (selected) {
+            program.fillPoints3D(scratch, xs, ys, zs, points, actual);
+            result.compare(16, expected, actual, points, xs, zs, ys);
+        }
+        for (int batch : POINT_BATCHES) {
+            if (batch > points) {
+                break;
+            }
+            double[] partial = new double[points];
+            program.fillPoints3D(scratch, xs, ys, zs, batch, partial);
+            result.compare(selected ? 16 : 14, expected, partial, batch, xs, zs, ys);
         }
     }
 

@@ -7,6 +7,7 @@ public final class NoiseScratch {
 
     final double[][] coordinates = new double[3][BLOCK];
     final int[][] projections = new int[3][BLOCK];
+    final int[] identity = identityProjection();
     final double[][] axes = new double[3][];
     final double[][] pairLow = new double[3][];
     final double[][] pairHigh = new double[3][];
@@ -65,6 +66,14 @@ public final class NoiseScratch {
             pairLow[pair] = new double[Math.max(length, 16)];
             pairHigh[pair] = new double[Math.max(length, 16)];
         }
+    }
+
+    private static int[] identityProjection() {
+        int[] identity = new int[BLOCK];
+        for (int index = 0; index < BLOCK; index++) {
+            identity[index] = index;
+        }
+        return identity;
     }
 
     double[] scalarValues(int terms) {

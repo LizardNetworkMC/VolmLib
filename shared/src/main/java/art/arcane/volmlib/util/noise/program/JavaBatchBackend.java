@@ -80,6 +80,32 @@ final class JavaBatchBackend implements NoiseBackend {
         evaluateVolume(program, scratch, nx, ny, nz, out);
     }
 
+    @Override
+    public void fillPoints3D(NoiseProgram program, NoiseScratch scratch, double[] xs, double[] ys, double[] zs, int count, double[] out) {
+        scratch.prepareTerms(program.termCount);
+        double[][] coordinates = scratch.coordinates;
+        double[] coordinateX = coordinates[0];
+        double[] coordinateY = coordinates[1];
+        double[] coordinateZ = coordinates[2];
+        int[] identity = scratch.identity;
+        int termCount = program.termCount;
+        for (int start = 0; start < count; start += BLOCK) {
+            int length = Math.min(BLOCK, count - start);
+            System.arraycopy(xs, start, coordinateX, 0, length);
+            System.arraycopy(ys, start, coordinateY, 0, length);
+            System.arraycopy(zs, start, coordinateZ, 0, length);
+            for (int term = 0; term < termCount; term++) {
+                if (NoiseProgramCompiler.isVolumetricMode(program.termMode[term])) {
+                    volumeTerm(program, scratch, term, coordinates[program.termAxis0[term]], coordinates[program.termAxis1[term]],
+                            coordinates[program.termAxis2[term]], identity, length);
+                } else {
+                    pairTerm(program, scratch, term, coordinates[program.termAxis0[term]], coordinates[program.termAxis1[term]], length);
+                }
+            }
+            System.arraycopy(scratch.values[program.rootTerm], 0, out, start, length);
+        }
+    }
+
     private static void evaluatePlanar(NoiseProgram program, NoiseScratch scratch, int length) {
         double[][] coordinates = scratch.coordinates;
         int count = program.termCount;

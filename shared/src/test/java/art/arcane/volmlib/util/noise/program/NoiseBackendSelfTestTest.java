@@ -15,7 +15,7 @@ public class NoiseBackendSelfTestTest {
 
     @Test
     public void singleBitDifferencesFailTheSelfTest() {
-        for (String api : new String[]{"fill2D", "fillGrid2D", "fillColumn3D", "fillLattice3D"}) {
+        for (String api : new String[]{"fill2D", "fillGrid2D", "fillColumn3D", "fillLattice3D", "fillPoints3D"}) {
             String failure = NoiseBackendSelfTest.run(new PerturbedBackend(api));
             assertNotNull(api, failure);
             assertTrue(failure, failure.endsWith(api));
@@ -72,6 +72,12 @@ public class NoiseBackendSelfTestTest {
                                   int nx, int ny, int nz, double[] out) {
             NoiseBackends.java().fillLattice3D(program, scratch, x0, y0, z0, stepX, stepY, stepZ, nx, ny, nz, out);
             perturb("fillLattice3D", out, nx * ny * nz);
+        }
+
+        @Override
+        public void fillPoints3D(NoiseProgram program, NoiseScratch scratch, double[] xs, double[] ys, double[] zs, int count, double[] out) {
+            NoiseBackends.java().fillPoints3D(program, scratch, xs, ys, zs, count, out);
+            perturb("fillPoints3D", out, count);
         }
 
         private void perturb(String call, double[] out, int count) {
