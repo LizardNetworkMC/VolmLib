@@ -51,6 +51,10 @@ public final class NoiseProgram {
     private final long signature;
     private final NoiseBackend backend;
     private final ScalarEvaluator scalar;
+    private final PrimitiveKernel leafKernel;
+    private final double leafScale;
+    private final double leafOpacity;
+    private final boolean leafUnityOpacity;
 
     NoiseProgram(NoiseProgramCompiler compiler) {
         volumetric = compiler.volumetric;
@@ -141,6 +145,12 @@ public final class NoiseProgram {
         NoiseBackend selected = NoiseBackends.selected();
         backend = selected.supports(this) ? selected : NoiseBackends.java();
         scalar = ScalarEvaluator.of(this);
+        int rootNode = termNode[rootTerm];
+        boolean leaf = termCount == 1 && !nodeOpaque[rootNode] && !termApplyPost[rootTerm] && termDep0[rootTerm] < 0;
+        leafKernel = leaf ? nodeKernels[rootNode] : null;
+        leafScale = nodeScale[rootNode];
+        leafOpacity = nodeOpacity[rootNode];
+        leafUnityOpacity = nodeUnityOpacity[rootNode];
     }
 
     public static NoiseProgram compile2D(CNG root) {
@@ -165,11 +175,20 @@ public final class NoiseProgram {
 
     public double sample2D(double x, double z) {
         requirePlanar();
+        PrimitiveKernel kernel = leafKernel;
+        if (kernel != null) {
+            return kernel.noise2(x * leafScale, z * leafScale) * leafOpacity;
+        }
         return scalar.sample(x, z, 0D);
     }
 
     public double sampleSigned3D(double x, double y, double z) {
         requireVolumetric();
+        PrimitiveKernel kernel = leafKernel;
+        if (kernel != null) {
+            double signed = kernel.signed3(x * leafScale, y * leafScale, z * leafScale);
+            return leafUnityOpacity ? signed : ((signed + 1D) * leafOpacity) - 1D;
+        }
         return scalar.sample(x, y, z);
     }
 
