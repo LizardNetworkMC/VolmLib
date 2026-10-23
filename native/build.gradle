@@ -18,7 +18,7 @@ subprojects {
     apply plugin: 'maven-publish'
     apply plugin: 'io.papermc.paperweight.userdev'
 
-    group = 'com.github.VolmitSoftware.VolmLib'
+    group = 'com.github.LizardNetworkMC.VolmLib'
 
     String nativeBundle = nativeTargets.getProperty(project.name + '.bundle')
     String nativeJava = nativeTargets.getProperty(project.name + '.java')

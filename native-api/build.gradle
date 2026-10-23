@@ -3,7 +3,7 @@ plugins {
     id 'maven-publish'
 }
 
-group = 'com.github.VolmitSoftware.VolmLib'
+group = 'com.github.LizardNetworkMC.VolmLib'
 
 java {
     toolchain.languageVersion = JavaLanguageVersion.of(25)
