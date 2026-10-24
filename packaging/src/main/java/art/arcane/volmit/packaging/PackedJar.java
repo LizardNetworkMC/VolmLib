@@ -521,7 +521,7 @@ public abstract class PackedJar extends DefaultTask {
         for (Map.Entry<ComponentIdentifier, File> entry : resolved.entrySet()) {
             String module;
             if (entry.getKey() instanceof ModuleComponentIdentifier component
-                    && component.getGroup().equals("com.github.VolmitSoftware.VolmLib")) {
+                    && component.getGroup().equals("com.github.LizardNetworkMC.VolmLib")) {
                 module = component.getModule();
             } else if (entry.getKey() instanceof ProjectComponentIdentifier component) {
                 module = component.getProjectPath().substring(1).replace(':', '-');
@@ -560,7 +560,7 @@ public abstract class PackedJar extends DefaultTask {
             }
             byte[] bytes = Files.readAllBytes(artifacts.get(module).toPath());
             String digest = HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(bytes));
-            embedded.add(module + ".coordinate=com.github.VolmitSoftware.VolmLib:" + module + ":embedded-" + digest);
+            embedded.add(module + ".coordinate=com.github.LizardNetworkMC.VolmLib:" + module + ":embedded-" + digest);
             embedded.add(module + ".sha256=" + digest);
             contents.put(options.resourceDirectory() + module + ".jar", bytes);
         }

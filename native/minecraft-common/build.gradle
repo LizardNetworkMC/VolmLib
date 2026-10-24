@@ -3,7 +3,7 @@ plugins {
     id 'maven-publish'
 }
 
-group = 'com.github.VolmitSoftware.VolmLib'
+group = 'com.github.LizardNetworkMC.VolmLib'
 
 TaskProvider<Jar> nativeSources = tasks.register('nativeSources', Jar) {
     archiveBaseName = 'native-minecraft26_2-sources'
